@@ -1,0 +1,218 @@
+// [MODEL] Schema do banco de dados
+//
+// O QUE FAZ: define o modelo de dados do sistema, do qual saem as migrations
+// e o cliente tipado do Prisma.
+//
+// COMO FARÁ: cada entidade do DRS vira um model, com os relacionamentos e as
+// restrições de integridade. As listas do front (produto com várias
+// categorias, RN0012) viram tabelas de ligação. Os tipos de `src/types/` são
+// a referência: já descrevem os campos de cada entidade.
+//
+// ATENDE: base de toda a persistência
+//
+// ESTADO: modelado o recorte do domínio de CLIENTES — Cliente, Telefone,
+// Endereco, Cartao, Pet e as quatro tabelas de domínio que eles referenciam.
+// O schema cresce por fatia: os grupos Produtos, Vendas, Estoque e Sistema
+// entram nas migrations seguintes, sem alterar o que já está aqui.
+//
+// Grupos previstos, conforme a Visão de Dados do DVP:
+//   Produtos  — Produto, GrupoPrecificacao, Marca, Categoria, Cor, Material,
+//               Porte, Especie                                   [pendente]
+//   Clientes  — Cliente, Pet, Endereco, Cartao, Telefone         [feito]
+//   Vendas    — Pedido, ItemPedido, Pagamento, Cupom, Troca      [pendente]
+//   Estoque   — ItemEstoque, MovimentacaoEstoque, Fornecedor     [pendente]
+//   Sistema   — Usuario, LogTransacao, MotivoSituacao            [pendente]
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Conexao das consultas: passa pelo pooler do Supabase (porta 6543).
+  url       = env("DATABASE_URL")
+  // Conexao direta (porta 5432): o `prisma migrate` exige, porque o
+  // pooler nao suporta os comandos de alteracao de esquema.
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enumerações
+// ---------------------------------------------------------------------------
+
+/// RN0026: gênero é um dos dados obrigatórios do cadastro.
+enum Genero {
+  MASCULINO
+  FEMININO
+  OUTRO
+}
+
+/// RN0021/RN0022: todo endereço serve para entrega ou para cobrança.
+enum TipoEndereco {
+  ENTREGA
+  COBRANCA
+}
+
+/// Espécie e porte do pet são listas fechadas no contrato do front, então
+/// viram enum em vez de tabela de domínio (RN0029).
+enum Especie {
+  CAO
+  GATO
+  OUTRO
+}
+
+enum PorteSigla {
+  PP
+  P
+  M
+  G
+  GG
+}
+
+// ---------------------------------------------------------------------------
+// Tabelas de domínio (RNF0013) referenciadas por este recorte
+// ---------------------------------------------------------------------------
+
+/// RN0026: o telefone do cliente tem tipo (celular, residencial, comercial).
+model TipoTelefone {
+  id        Int        @id @default(autoincrement())
+  nome      String     @unique
+  telefones Telefone[]
+
+  @@map("tipo_telefone")
+}
+
+/// RN0023: dado obrigatório do endereço.
+model TipoResidencia {
+  id        Int        @id @default(autoincrement())
+  nome      String     @unique
+  enderecos Endereco[]
+
+  @@map("tipo_residencia")
+}
+
+/// RN0023: dado obrigatório do endereço.
+model TipoLogradouro {
+  id        Int        @id @default(autoincrement())
+  nome      String     @unique
+  enderecos Endereco[]
+
+  @@map("tipo_logradouro")
+}
+
+/// RN0025: só cartões destas bandeiras podem ser cadastrados.
+model BandeiraCartao {
+  id      Int      @id @default(autoincrement())
+  nome    String   @unique
+  cartoes Cartao[]
+
+  @@map("bandeira_cartao")
+}
+
+// ---------------------------------------------------------------------------
+// Clientes
+// ---------------------------------------------------------------------------
+
+/// RF0021-RF0025. O CPF e o e-mail são únicos; o CPF é gravado só com
+/// dígitos, para que duas grafias da mesma pessoa não passem pela restrição.
+model Cliente {
+  id                      Int      @id @default(autoincrement())
+  /// RNF0035: código único no formato CLI-0000, gerado pelo sistema.
+  codigo                  String   @unique
+  nome                    String
+  genero                  Genero
+  dataNascimento          DateTime @map("data_nascimento") @db.Date
+  /// Somente dígitos — a formatação é responsabilidade da camada de saída.
+  cpf                     String   @unique
+  email                   String   @unique
+  /// RN0027: nota de 1 a 5 derivada do histórico de compras.
+  ranking                 Int      @default(1)
+  /// RF0023: cadastro inativado nunca é apagado.
+  ativo                   Boolean  @default(true)
+  justificativaInativacao String?  @map("justificativa_inativacao")
+  criadoEm                DateTime @default(now()) @map("criado_em")
+  atualizadoEm            DateTime @updatedAt @map("atualizado_em")
+
+  telefone  Telefone?
+  enderecos Endereco[]
+  cartoes   Cartao[]
+  pets      Pet[]
+
+  @@index([nome])
+  @@map("cliente")
+}
+
+/// RN0026: composto por tipo, DDD e número. Um por cliente — daí o `@unique`
+/// em `clienteId`, que transforma a relação em 1-para-1.
+model Telefone {
+  id        Int    @id @default(autoincrement())
+  clienteId Int    @unique @map("cliente_id")
+  tipoId    Int    @map("tipo_id")
+  ddd       String @db.VarChar(3)
+  numero    String @db.VarChar(15)
+
+  cliente Cliente      @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  tipo    TipoTelefone @relation(fields: [tipoId], references: [id])
+
+  @@map("telefone")
+}
+
+/// RN0023: todos os campos são obrigatórios, exceto `observacoes`.
+model Endereco {
+  id               Int          @id @default(autoincrement())
+  clienteId        Int          @map("cliente_id")
+  /// RF0026: frase curta que identifica o endereço (ex.: "Casa").
+  apelido          String
+  tipo             TipoEndereco
+  tipoResidenciaId Int          @map("tipo_residencia_id")
+  tipoLogradouroId Int          @map("tipo_logradouro_id")
+  logradouro       String
+  numero           String
+  bairro           String
+  cep              String       @db.VarChar(9)
+  cidade           String
+  estado           String       @db.VarChar(2)
+  pais             String
+  observacoes      String?
+
+  cliente        Cliente        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  tipoResidencia TipoResidencia @relation(fields: [tipoResidenciaId], references: [id])
+  tipoLogradouro TipoLogradouro @relation(fields: [tipoLogradouroId], references: [id])
+
+  @@index([clienteId])
+  @@map("endereco")
+}
+
+/// RN0024/RN0025 e RF0027 (o preferencial).
+model Cartao {
+  id              Int     @id @default(autoincrement())
+  clienteId       Int     @map("cliente_id")
+  numero          String  @db.VarChar(19)
+  nomeImpresso    String  @map("nome_impresso")
+  bandeiraId      Int     @map("bandeira_id")
+  codigoSeguranca String  @map("codigo_seguranca") @db.VarChar(4)
+  /// RF0027: exatamente um cartão do cliente é o preferencial.
+  preferencial    Boolean @default(false)
+
+  cliente  Cliente        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  bandeira BandeiraCartao @relation(fields: [bandeiraId], references: [id])
+
+  @@index([clienteId])
+  @@map("cartao")
+}
+
+/// RN0029: todo pet pertence obrigatoriamente a um cliente.
+model Pet {
+  id        Int        @id @default(autoincrement())
+  clienteId Int        @map("cliente_id")
+  nome      String
+  especie   Especie
+  raca      String
+  porte     PorteSigla
+  peso      Decimal    @db.Decimal(5, 2)
+
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@index([clienteId])
+  @@map("pet")
+}
