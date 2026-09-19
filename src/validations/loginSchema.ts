@@ -10,4 +10,18 @@
  * dados.
  */
 
-// TODO: implementar o schema.
+import { z } from 'zod';
+
+/**
+ * As premissas do DRS removeram força de senha, confirmação e recuperação
+ * junto com a autenticação real — por isso `senha` só exige presença. O
+ * front recusa exatamente estes dois casos em `LoginSchema.ts`.
+ */
+export const loginSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email('Insira um e-mail válido'),
+  senha: z.string().min(1, 'Senha é obrigatória'),
+});

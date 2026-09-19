@@ -10,10 +10,9 @@
  *
  * ATENDE: RF0001-RF0005, RN0001-RN0003
  *
- * ESTADO: só a parte consumida pelos middlewares de autenticação e
- * autorização está portada — o suficiente para as rotas de outros domínios
- * se protegerem. O restante do domínio (login, troca de senha) continua
- * pendente junto com o seu service.
+ * ESTADO: portado por inteiro. `Usuario`, `LoginPayload` e `LoginResponse`
+ * espelham o arquivo homônimo do front, para que o service de lá troque o
+ * mock pela chamada HTTP sem mexer em tipo nenhum.
  */
 
 export type Perfil = 'ADMIN' | 'CLIENTE';
@@ -31,6 +30,30 @@ export interface UsuarioAutenticado {
   id: number;
   perfil: Perfil;
   clienteId?: number;
+}
+
+/** Usuário como o front o guarda na sessão. */
+export interface Usuario {
+  id: number;
+  nome: string;
+  email: string;
+  perfil: Perfil;
+  /** Preenchido apenas quando o perfil é CLIENTE. */
+  clienteId?: number;
+}
+
+export interface LoginPayload {
+  email: string;
+  senha: string;
+}
+
+export interface LoginResponse {
+  /**
+   * JWT assinado por esta API. O front guarda no localStorage e o envia em
+   * `Authorization: Bearer`; é o mesmo token que `autenticacao` verifica.
+   */
+  token: string;
+  usuario: Usuario;
 }
 
 declare global {

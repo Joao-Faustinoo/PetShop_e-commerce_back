@@ -12,9 +12,34 @@
 
 /*
  * Endpoints:
- *   POST   /auth/login
- *   POST   /auth/registrar
- *   GET    /auth/eu
+ *   POST   /auth/login       público
+ *   POST   /auth/registrar   público
+ *   GET    /auth/eu          autenticado, qualquer perfil
  */
 
-// TODO: implementar o roteador.
+import { Router } from 'express';
+
+import { authController } from '../controllers/authController';
+import { autenticacao } from '../middlewares/autenticacao';
+import { validar } from '../middlewares/validar';
+import { criarClienteSchema } from '../validations/clienteSchema';
+import { loginSchema } from '../validations/loginSchema';
+
+export const authRoutes = Router();
+
+/** Entrar e cadastrar-se são abertos: é por onde um visitante começa. */
+authRoutes.post(
+  '/login',
+  validar({ body: loginSchema }),
+  authController.login,
+);
+
+// O corpo é o mesmo do autocadastro em POST /clientes — mesma regra, mesmo
+// schema; o que muda é a sessão que volta junto.
+authRoutes.post(
+  '/registrar',
+  validar({ body: criarClienteSchema }),
+  authController.registrar,
+);
+
+authRoutes.get('/eu', autenticacao, authController.eu);
