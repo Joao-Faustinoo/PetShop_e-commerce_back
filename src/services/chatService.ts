@@ -1,7 +1,7 @@
 /**
  * [MODEL] Service de assistente de recomendação
  *
- * O QUE FAZ: monta o contexto do cliente e consulta a OpenAI API,
+ * O QUE FAZ: monta o contexto do cliente e consulta a API do Google Gemini,
  * devolvendo a resposta com os produtos sugeridos, filtrados pela espécie
  * e pelo porte do pet.
  *
