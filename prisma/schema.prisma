@@ -141,6 +141,9 @@ model Cliente {
   carrinho  Carrinho?
   pedidos   Pedido[]
 
+  trocas        Troca[]
+  notificacoes  Notificacao[]
+
   @@index([nome])
   @@map("cliente")
 }
@@ -334,6 +337,7 @@ model Produto {
   itensEstoque  ItemEstoque[]
   itensCarrinho ItemCarrinho[]
   itensPedido   ItemPedido[]
+  itensTroca    ItemTroca[]
 
   @@index([nome])
   @@index([ativo])
@@ -395,6 +399,13 @@ enum SituacaoPedido {
   TROCADO
 }
 
+/// RN0041, RN0042: o ciclo de vida de um pedido de troca.
+enum StatusTroca {
+  EM_TROCA
+  TROCA_AUTORIZADA
+  TROCADO
+}
+
 enum FormaPagamento {
   CARTAO
   CUPOM_TROCA
@@ -415,6 +426,8 @@ model Cupom {
 
   cliente    Cliente?    @relation(fields: [clienteId], references: [id])
   pagamentos Pagamento[]
+  /// RF0044: preenchido quando o cupom nasce da confirmação de uma troca.
+  trocaOrigem Troca?
 
   @@index([clienteId])
   @@map("cupom")
@@ -468,6 +481,7 @@ model Pedido {
 
   itens      ItemPedido[]
   pagamentos Pagamento[]
+  trocas     Troca[]
 
   @@index([clienteId])
   @@index([situacao])
@@ -530,4 +544,74 @@ model LogTransacao {
   @@index([entidade, entidadeId])
   @@index([dataHora])
   @@map("log_transacao")
+}
+
+// ---------------------------------------------------------------------------
+// Grupo Trocas
+// ---------------------------------------------------------------------------
+
+/// RF0041, RN0041: a solicitação de troca de um item ou da compra inteira.
+/// Vive separada do Pedido porque tem itens, motivo e ciclo próprios — e
+/// porque um pedido pode receber mais de uma solicitação ao longo do tempo.
+model Troca {
+  id              Int         @id @default(autoincrement())
+  /// RNF0035 aplicada à troca: código único legível, no formato TRC-0000.
+  numero          String      @unique @db.VarChar(16)
+  pedidoId        Int         @map("pedido_id")
+  clienteId       Int         @map("cliente_id")
+  motivo          String
+  status          StatusTroca @default(EM_TROCA)
+  /// RN0041: true quando a solicitação cobre todos os itens da compra.
+  trocaTotal      Boolean     @default(false) @map("troca_total")
+  valorTotal      Decimal     @map("valor_total") @db.Decimal(10, 2)
+  dataSolicitacao DateTime    @default(now()) @map("data_solicitacao")
+  /// RF0044: o administrador informa se os itens voltam ao estoque.
+  retornouAoEstoque Boolean?  @map("retornou_ao_estoque")
+  /// RF0044: cupom emitido na confirmação do recebimento.
+  cupomGeradoId   Int?        @unique @map("cupom_gerado_id")
+
+  pedido      Pedido      @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  cliente     Cliente     @relation(fields: [clienteId], references: [id])
+  cupomGerado Cupom?      @relation(fields: [cupomGeradoId], references: [id])
+  itens       ItemTroca[]
+
+  @@index([pedidoId])
+  @@index([clienteId])
+  @@index([status])
+  @@map("troca")
+}
+
+/// Os itens que o cliente pediu para trocar, com o valor congelado no
+/// momento da solicitação — é ele que vira o cupom (RF0044).
+model ItemTroca {
+  id            Int     @id @default(autoincrement())
+  trocaId       Int     @map("troca_id")
+  produtoId     Int     @map("produto_id")
+  produtoNome   String  @map("produto_nome")
+  quantidade    Int
+  valorUnitario Decimal @map("valor_unitario") @db.Decimal(10, 2)
+  subtotal      Decimal @db.Decimal(10, 2)
+
+  troca   Troca   @relation(fields: [trocaId], references: [id], onDelete: Cascade)
+  produto Produto @relation(fields: [produtoId], references: [id])
+
+  @@index([trocaId])
+  @@map("item_troca")
+}
+
+/// RNF0046: o cliente precisa RECEBER o aviso de que a troca foi
+/// autorizada, e não apenas ver o status mudar na lista de pedidos.
+model Notificacao {
+  id        Int      @id @default(autoincrement())
+  clienteId Int      @map("cliente_id")
+  mensagem  String
+  lida      Boolean  @default(false)
+  criadoEm  DateTime @default(now()) @map("criado_em")
+  /// Leva o cliente direto ao pedido que originou o aviso.
+  pedidoId  Int?     @map("pedido_id")
+
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@index([clienteId, lida])
+  @@map("notificacao")
 }
