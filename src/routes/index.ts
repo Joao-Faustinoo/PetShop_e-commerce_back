@@ -19,9 +19,12 @@ import { authRoutes } from './authRoutes';
 import { clientesRoutes } from './clientesRoutes';
 import { carrinhoRoutes } from './carrinhoRoutes';
 import { cartoesRoutes } from './cartoesRoutes';
+import { cuponsRoutes } from './cuponsRoutes';
 import { enderecosRoutes } from './enderecosRoutes';
+import { notificacoesRoutes } from './notificacoesRoutes';
 import { pedidosRoutes } from './pedidosRoutes';
 import { produtosRoutes } from './produtosRoutes';
+import { trocasRoutes } from './trocasRoutes';
 
 export const rotas = Router();
 
@@ -36,3 +39,6 @@ rotas.use('/carrinho', carrinhoRoutes);
 rotas.use('/pedidos', pedidosRoutes);
 rotas.use('/enderecos', enderecosRoutes);
 rotas.use('/cartoes', cartoesRoutes);
+rotas.use('/trocas', trocasRoutes);
+rotas.use('/notificacoes', notificacoesRoutes);
+rotas.use('/cupons', cuponsRoutes);
