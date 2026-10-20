@@ -3,21 +3,41 @@
  *
  * O QUE FAZ: associa os caminhos de produtos aos handlers do controller.
  *
- * COMO FARÁ: define o Router do Express, encadeando os middlewares de
- * autenticação, autorização por perfil e validação antes de cada handler.
+ * COMO FARÁ: define o Router do Express, encadeando a validação antes de
+ * cada handler.
  *
- * ATENDE: RF0011-RF0016, RN0012, RN0013, RN0015-RN0017, RNF0021
+ * ATENDE: RF0017
  */
 
 /*
  * Endpoints:
- *   GET    /produtos
- *   GET    /produtos/:id
- *   POST   /produtos
- *   PUT    /produtos/:id
- *   PATCH  /produtos/:id/inativar
- *   PATCH  /produtos/:id/ativar
- *   POST   /produtos/inativacao-automatica
+ *   GET /produtos       público — a vitrine é aberta
+ *   GET /produtos/:id   público
  */
 
-// TODO: implementar o roteador.
+import { Router } from 'express';
+
+import { produtosController } from '../controllers/produtosController';
+import { validar } from '../middlewares/validar';
+import {
+  idProdutoSchema,
+  produtoFiltrosSchema,
+} from '../validations/produtoSchema';
+
+export const produtosRoutes = Router();
+
+/**
+ * A vitrine não exige token: um visitante precisa ver o catálogo antes de
+ * decidir se cria conta. O que depende de sessão é o carrinho.
+ */
+produtosRoutes.get(
+  '/',
+  validar({ query: produtoFiltrosSchema }),
+  produtosController.listar,
+);
+
+produtosRoutes.get(
+  '/:id',
+  validar({ params: idProdutoSchema }),
+  produtosController.detalhar,
+);

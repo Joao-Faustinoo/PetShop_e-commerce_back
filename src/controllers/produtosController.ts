@@ -1,24 +1,50 @@
 /**
  * [CONTROLLER] Controller de produtos
  *
- * O QUE FAZ: expõe as operações de produtos sobre HTTP.
+ * O QUE FAZ: expõe a consulta ao catálogo sobre HTTP.
  *
- * COMO FARÁ: extrai parâmetros e corpo da requisição, chama o service
- * correspondente e devolve a resposta com o status adequado. Repassa o
- * erro ao middleware de tratamento em vez de tratá-lo aqui.
+ * COMO FARÁ: extrai filtros e paginação da query, chama o service e
+ * devolve a página. Repassa o erro ao middleware de tratamento.
  *
- * ATENDE: RF0011-RF0016, RN0012, RN0013, RN0015-RN0017, RNF0021
+ * ATENDE: RF0017
  */
 
-/*
- * Endpoints deste controller:
- *   GET    /produtos
- *   GET    /produtos/:id
- *   POST   /produtos
- *   PUT    /produtos/:id
- *   PATCH  /produtos/:id/inativar
- *   PATCH  /produtos/:id/ativar
- *   POST   /produtos/inativacao-automatica
- */
+import { NextFunction, Request, Response } from 'express';
 
-// TODO: implementar os handlers.
+import { produtosService } from '../services/produtosService';
+import { ProdutoFiltros } from '../types/produtos/types';
+import { lerPaginacao } from '../utils/paginacao';
+
+export const produtosController = {
+  /** GET /produtos — RF0017 */
+  async listar(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { pagina, itensPorPagina, ...filtros } = req.query as ProdutoFiltros & {
+        pagina?: number;
+        itensPorPagina?: number;
+      };
+
+      res.json(
+        await produtosService.listar(
+          filtros,
+          lerPaginacao({ pagina, itensPorPagina }),
+        ),
+      );
+    } catch (erro) {
+      next(erro);
+    }
+  },
+
+  /** GET /produtos/:id */
+  async detalhar(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      res.json(await produtosService.buscarPorId(Number(req.params.id)));
+    } catch (erro) {
+      next(erro);
+    }
+  },
+};

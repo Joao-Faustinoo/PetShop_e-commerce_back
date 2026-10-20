@@ -453,6 +453,10 @@ model ItemCarrinho {
   produtoId     Int     @map("produto_id")
   quantidade    Int
   valorUnitario Decimal @map("valor_unitario") @db.Decimal(10, 2)
+  /// RN0044 e RNF0042: preenchido quando o prazo expira. O item deixa de
+  /// bloquear estoque, mas continua na lista como "removido", para o
+  /// cliente poder devolvê-lo ao carrinho.
+  expiradoEm    DateTime? @map("expirado_em")
 
   carrinho Carrinho @relation(fields: [carrinhoId], references: [id], onDelete: Cascade)
   produto  Produto  @relation(fields: [produtoId], references: [id])
