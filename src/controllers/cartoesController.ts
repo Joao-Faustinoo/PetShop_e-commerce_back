@@ -1,22 +1,53 @@
 /**
- * [CONTROLLER] Controller de cartões de crédito
+ * [CONTROLLER] Controller de cartões
  *
- * O QUE FAZ: expõe as operações de cartões de crédito sobre HTTP.
+ * O QUE FAZ: expõe a consulta e o cadastro de cartões do cliente logado.
  *
- * COMO FARÁ: extrai parâmetros e corpo da requisição, chama o service
- * correspondente e devolve a resposta com o status adequado. Repassa o
- * erro ao middleware de tratamento em vez de tratá-lo aqui.
+ * COMO FARÁ: identifica o cliente pelo token, chama o service e devolve a
+ * resposta. Repassa o erro ao middleware de tratamento.
  *
- * ATENDE: RF0027, RF0036, RN0024, RN0025
+ * ATENDE: RF0027, RF0036
  */
 
 /*
  * Endpoints deste controller:
- *   GET    /clientes/:clienteId/cartoes
- *   POST   /clientes/:clienteId/cartoes
- *   PUT    /cartoes/:id
- *   DELETE /cartoes/:id
- *   PATCH  /cartoes/:id/preferencial
+ *   GET  /cartoes    cliente
+ *   POST /cartoes    cliente
  */
 
-// TODO: implementar os handlers.
+import { NextFunction, Request, Response } from 'express';
+
+import { cartoesService } from '../services/cartoesService';
+import { ApiError } from '../utils/ApiError';
+
+/** O cartão é sempre do dono da sessão; não há rota para o cartão alheio. */
+const clienteDaSessao = (req: Request): number => {
+  const id = req.usuario?.clienteId;
+
+  if (!id) {
+    throw ApiError.naoAutorizado('Entre com uma conta de cliente.');
+  }
+
+  return id;
+};
+
+export const cartoesController = {
+  async listar(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json(await cartoesService.listar(clienteDaSessao(req)));
+    } catch (erro) {
+      next(erro);
+    }
+  },
+
+  /** RF0036: cartão novo incorporado ao perfil, para poder pagar com ele. */
+  async criar(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res
+        .status(201)
+        .json(await cartoesService.criar(clienteDaSessao(req), req.body));
+    } catch (erro) {
+      next(erro);
+    }
+  },
+};

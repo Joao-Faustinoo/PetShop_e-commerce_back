@@ -14,6 +14,7 @@
  * Endpoints:
  *   GET    /carrinho                              cliente
  *   GET    /carrinho/parametros                   cliente
+ *   GET    /carrinho/resumo?enderecoEntregaId=    cliente
  *   POST   /carrinho/itens                        cliente
  *   PUT    /carrinho/itens/:produtoId             cliente
  *   DELETE /carrinho/itens/:produtoId             cliente
@@ -30,6 +31,7 @@ import {
   adicionarItemSchema,
   alterarQuantidadeSchema,
   produtoParamSchema,
+  resumoSchema,
 } from '../validations/carrinhoSchema';
 
 export const carrinhoRoutes = Router();
@@ -37,6 +39,13 @@ export const carrinhoRoutes = Router();
 carrinhoRoutes.use(autenticacao);
 
 carrinhoRoutes.get('/parametros', carrinhoController.parametros);
+
+/** RF0034: o frete sai daqui, calculado pelo servidor. */
+carrinhoRoutes.get(
+  '/resumo',
+  validar({ query: resumoSchema }),
+  carrinhoController.resumo,
+);
 carrinhoRoutes.get('/', carrinhoController.ver);
 carrinhoRoutes.delete('/', carrinhoController.esvaziar);
 

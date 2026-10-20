@@ -1,22 +1,68 @@
 /**
- * [CONTROLLER] Rotas de pedidos e checkout
+ * [CONTROLLER] Rotas de pedidos
  *
- * O QUE FAZ: associa os caminhos de pedidos e checkout aos handlers do
- * controller.
+ * O QUE FAZ: associa os caminhos de pedidos aos handlers do controller.
  *
- * COMO FARÁ: define o Router do Express, encadeando os middlewares de
- * autenticação, autorização por perfil e validação antes de cada handler.
+ * COMO FARÁ: define o Router do Express, encadeando autenticação,
+ * autorização por perfil e validação antes de cada handler.
  *
- * ATENDE: RF0025, RF0033-RF0040, RN0028, RN0031-RN0037
+ * ATENDE: RF0033, RF0038, RF0039, RF0040
  */
 
 /*
  * Endpoints:
- *   GET    /pedidos
- *   GET    /pedidos/:id
- *   POST   /pedidos
- *   PATCH  /pedidos/:id/situacao
- *   GET    /clientes/:clienteId/pedidos
+ *   GET    /pedidos                  autenticado — o escopo depende do perfil
+ *   GET    /pedidos/:id              ADMIN ou o dono da compra
+ *   POST   /pedidos                  CLIENTE
+ *   PATCH  /pedidos/:id/despachar    ADMIN
+ *   PATCH  /pedidos/:id/entregar     ADMIN
  */
 
-// TODO: implementar o roteador.
+import { Router } from 'express';
+
+import { pedidosController } from '../controllers/pedidosController';
+import { autenticacao } from '../middlewares/autenticacao';
+import { autorizacao } from '../middlewares/autorizacao';
+import { validar } from '../middlewares/validar';
+import {
+  finalizarCompraSchema,
+  idPedidoSchema,
+  pedidoFiltrosSchema,
+} from '../validations/checkoutSchema';
+
+export const pedidosRoutes = Router();
+
+pedidosRoutes.use(autenticacao);
+
+pedidosRoutes.get(
+  '/',
+  validar({ query: pedidoFiltrosSchema }),
+  pedidosController.listar,
+);
+
+pedidosRoutes.post(
+  '/',
+  validar({ body: finalizarCompraSchema }),
+  pedidosController.finalizar,
+);
+
+pedidosRoutes.get(
+  '/:id',
+  validar({ params: idPedidoSchema }),
+  pedidosController.detalhar,
+);
+
+/** RF0039 e RF0040: as duas mudanças de situação que são do administrador. */
+pedidosRoutes.patch(
+  '/:id/despachar',
+  autorizacao('ADMIN'),
+  validar({ params: idPedidoSchema }),
+  pedidosController.despachar,
+);
+
+pedidosRoutes.patch(
+  '/:id/entregar',
+  autorizacao('ADMIN'),
+  validar({ params: idPedidoSchema }),
+  pedidosController.entregar,
+);

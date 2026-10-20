@@ -28,6 +28,7 @@ import {
 } from '../types/carrinho/types';
 import { Produto } from '../types/produtos/types';
 import { ApiError } from '../utils/ApiError';
+import { calcularFrete } from './pedidosService';
 
 const duasCasas = (valor: number): number => Number(valor.toFixed(2));
 
@@ -242,6 +243,46 @@ export const carrinhoService = {
     await carrinhoModel.esvaziar(clienteId);
 
     return vazio();
+  },
+
+  /**
+   * RF0034: o que a compra vai custar com um endereço escolhido. A tela do
+   * checkout mostra isso antes de finalizar, e o valor é o mesmo que o
+   * servidor vai cobrar — o frete não vem pronto do navegador.
+   */
+  async resumo(
+    clienteId: number,
+    enderecoEntregaId: number,
+  ): Promise<{ subtotal: number; frete: number; total: number }> {
+    const endereco = await prisma.endereco.findFirst({
+      where: { id: enderecoEntregaId, clienteId },
+    });
+
+    if (!endereco) {
+      throw ApiError.requisicaoInvalida(
+        'Endereço de entrega inválido para este cliente.',
+      );
+    }
+
+    const carrinho = await carrinhoModel.buscar(clienteId);
+    const itens = carrinho?.itens.filter(i => i.expiradoEm === null) ?? [];
+
+    const subtotal = duasCasas(
+      itens.reduce((s, i) => s + i.valorUnitario.toNumber() * i.quantidade, 0),
+    );
+
+    const frete = calcularFrete(
+      itens.map(i => ({
+        quantidade: i.quantidade,
+        altura: i.produto.altura.toNumber(),
+        largura: i.produto.largura.toNumber(),
+        profundidade: i.produto.profundidade.toNumber(),
+        peso: i.produto.peso.toNumber(),
+      })),
+      endereco.estado,
+    );
+
+    return { subtotal, frete, total: duasCasas(subtotal + frete) };
   },
 
   /**

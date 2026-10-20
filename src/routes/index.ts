@@ -7,7 +7,8 @@
  * que o `app.ts` registra sob o prefixo `/api`. Também expõe `/health`,
  * para verificação de disponibilidade.
  *
- * ESTADO: auth, clientes, produtos e carrinho montados. Cada fatia implementada acrescenta uma
+ * ESTADO: auth, clientes, produtos, carrinho, pedidos, endereços e
+ * cartões montados. Cada fatia implementada acrescenta uma
  * linha aqui — os arquivos de rota dos outros domínios seguem em TODO e
  * por isso não são importados ainda.
  */
@@ -17,6 +18,9 @@ import { Router } from 'express';
 import { authRoutes } from './authRoutes';
 import { clientesRoutes } from './clientesRoutes';
 import { carrinhoRoutes } from './carrinhoRoutes';
+import { cartoesRoutes } from './cartoesRoutes';
+import { enderecosRoutes } from './enderecosRoutes';
+import { pedidosRoutes } from './pedidosRoutes';
 import { produtosRoutes } from './produtosRoutes';
 
 export const rotas = Router();
@@ -29,3 +33,6 @@ rotas.use('/auth', authRoutes);
 rotas.use('/clientes', clientesRoutes);
 rotas.use('/produtos', produtosRoutes);
 rotas.use('/carrinho', carrinhoRoutes);
+rotas.use('/pedidos', pedidosRoutes);
+rotas.use('/enderecos', enderecosRoutes);
+rotas.use('/cartoes', cartoesRoutes);

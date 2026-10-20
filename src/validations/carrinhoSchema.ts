@@ -31,3 +31,11 @@ export const alterarQuantidadeSchema = z.object({
 export const produtoParamSchema = z.object({
   produtoId: z.coerce.number().int().positive('Id de produto inválido.'),
 });
+
+/** RF0034: o resumo depende do endereço, que define a região do frete. */
+export const resumoSchema = z.object({
+  enderecoEntregaId: z.coerce
+    .number()
+    .int()
+    .positive('Selecione o endereço de entrega.'),
+});

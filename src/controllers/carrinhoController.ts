@@ -14,6 +14,7 @@
  * Endpoints deste controller:
  *   GET    /carrinho
  *   GET    /carrinho/parametros
+ *   GET    /carrinho/resumo
  *   POST   /carrinho/itens
  *   PUT    /carrinho/itens/:produtoId
  *   DELETE /carrinho/itens/:produtoId
@@ -55,6 +56,20 @@ export const carrinhoController = {
   async parametros(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       res.json(carrinhoService.parametros());
+    } catch (erro) {
+      next(erro);
+    }
+  },
+
+  /** RF0034: subtotal, frete e total para o endereço escolhido. */
+  async resumo(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json(
+        await carrinhoService.resumo(
+          clienteDaSessao(req),
+          Number(req.query.enderecoEntregaId),
+        ),
+      );
     } catch (erro) {
       next(erro);
     }

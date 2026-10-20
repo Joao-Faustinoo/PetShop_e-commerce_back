@@ -1,17 +1,95 @@
 /**
- * [MODEL] Service de cartões de crédito
+ * [MODEL] Service de cartões
  *
- * O QUE FAZ: valida a composição exigida pela RN0024, aceita apenas
- * bandeiras registradas (RN0025) e mantém um único cartão preferencial por
- * cliente.
+ * O QUE FAZ: lista os cartões do cliente e incorpora um novo ao perfil.
  *
- * COMO FARÁ: orquestra o model e aplica as regras do DRS, lançando
- * ApiError quando uma delas é violada. Não conhece `req` nem `res`. A
- * referência de implementação é
- * `../e-commerce/src/service/cartoes/service.ts`, onde as mesmas regras já
- * estão escritas sobre dados mockados.
+ * COMO FARÁ: orquestra o Prisma e aplica as regras do DRS. O número e o
+ * código de segurança nunca saem inteiros da API: a tela só precisa dos
+ * quatro últimos dígitos para o cliente reconhecer o cartão.
  *
  * ATENDE: RF0027, RF0036, RN0024, RN0025
  */
 
-// TODO: implementar as regras de negócio.
+import { prisma } from '../config/prisma';
+import { Cartao, CriarCartaoPayload } from '../types/cartoes/types';
+import { ApiError } from '../utils/ApiError';
+
+const apenasDigitos = (valor: string): string => valor.replace(/\D/g, '');
+
+type LinhaCartao = {
+  id: number;
+  clienteId: number;
+  numero: string;
+  nomeImpresso: string;
+  bandeiraId: number;
+  codigoSeguranca: string;
+  preferencial: boolean;
+};
+
+/** O número viaja mascarado; o final é o que identifica o cartão na tela. */
+const paraCartao = (linha: LinhaCartao): Cartao => ({
+  id: linha.id,
+  clienteId: linha.clienteId,
+  numero: `**** **** **** ${linha.numero.slice(-4)}`,
+  nomeImpresso: linha.nomeImpresso,
+  bandeiraId: linha.bandeiraId,
+  codigoSeguranca: '***',
+  preferencial: linha.preferencial,
+});
+
+export const cartoesService = {
+  async listar(clienteId: number): Promise<Cartao[]> {
+    const linhas = await prisma.cartao.findMany({
+      where: { clienteId },
+      orderBy: [{ preferencial: 'desc' }, { id: 'asc' }],
+    });
+
+    return linhas.map(paraCartao);
+  },
+
+  /**
+   * RF0036: o cartão novo é incorporado ao perfil para poder ser usado no
+   * pagamento — a compra referencia o cartão por id.
+   */
+  async criar(clienteId: number, payload: CriarCartaoPayload): Promise<Cartao> {
+    const numero = apenasDigitos(payload.numero);
+
+    if (numero.length < 13 || numero.length > 19) {
+      throw ApiError.requisicaoInvalida('Número de cartão inválido.');
+    }
+
+    // RN0025: só bandeiras registradas no sistema.
+    const bandeira = await prisma.bandeiraCartao.findUnique({
+      where: { id: payload.bandeiraId },
+    });
+
+    if (!bandeira) {
+      throw ApiError.requisicaoInvalida('Bandeira de cartão não registrada.');
+    }
+
+    const primeiro = (await prisma.cartao.count({ where: { clienteId } })) === 0;
+
+    const linha = await prisma.$transaction(async tx => {
+      // Um preferencial por cliente: o novo destrona o anterior.
+      if (payload.preferencial) {
+        await tx.cartao.updateMany({
+          where: { clienteId },
+          data: { preferencial: false },
+        });
+      }
+
+      return tx.cartao.create({
+        data: {
+          clienteId,
+          numero,
+          nomeImpresso: payload.nomeImpresso.trim(),
+          bandeiraId: payload.bandeiraId,
+          codigoSeguranca: apenasDigitos(payload.codigoSeguranca),
+          preferencial: payload.preferencial || primeiro,
+        },
+      });
+    });
+
+    return paraCartao(linha);
+  },
+};

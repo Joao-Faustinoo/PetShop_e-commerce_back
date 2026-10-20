@@ -1,21 +1,54 @@
 /**
  * [CONTROLLER] Controller de endereços
  *
- * O QUE FAZ: expõe as operações de endereços sobre HTTP.
+ * O QUE FAZ: expõe a consulta e o cadastro de endereços do cliente logado.
  *
- * COMO FARÁ: extrai parâmetros e corpo da requisição, chama o service
- * correspondente e devolve a resposta com o status adequado. Repassa o
- * erro ao middleware de tratamento em vez de tratá-lo aqui.
+ * COMO FARÁ: identifica o cliente pelo token, chama o service e devolve a
+ * resposta. Repassa o erro ao middleware de tratamento.
  *
- * ATENDE: RF0026, RF0035, RNF0034, RN0021-RN0023
+ * ATENDE: RF0026, RF0035, RNF0034
  */
 
 /*
  * Endpoints deste controller:
- *   GET    /clientes/:clienteId/enderecos
- *   POST   /clientes/:clienteId/enderecos
- *   PUT    /enderecos/:id
- *   DELETE /enderecos/:id
+ *   GET  /enderecos?tipo=ENTREGA   cliente
+ *   POST /enderecos                cliente
  */
 
-// TODO: implementar os handlers.
+import { NextFunction, Request, Response } from 'express';
+
+import { enderecosService } from '../services/enderecosService';
+import { TipoEndereco } from '../types/enderecos/types';
+import { ApiError } from '../utils/ApiError';
+
+const clienteDaSessao = (req: Request): number => {
+  const id = req.usuario?.clienteId;
+
+  if (!id) {
+    throw ApiError.naoAutorizado('Entre com uma conta de cliente.');
+  }
+
+  return id;
+};
+
+export const enderecosController = {
+  async listar(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { tipo } = req.query as { tipo?: TipoEndereco };
+
+      res.json(await enderecosService.listar(clienteDaSessao(req), tipo));
+    } catch (erro) {
+      next(erro);
+    }
+  },
+
+  async criar(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res
+        .status(201)
+        .json(await enderecosService.criar(clienteDaSessao(req), req.body));
+    } catch (erro) {
+      next(erro);
+    }
+  },
+};
