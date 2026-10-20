@@ -3,8 +3,9 @@
  *
  * O QUE FAZ: define o contrato de dados de enderecos.
  *
- * COMO FARÁ: declara as interfaces de entidade, os payloads de criação e
- * alteração e os filtros de consulta. Só interfaces, sem lógica. Portado de
+ * COMO FARÁ: declara as interfaces de entidade, os payloads e os filtros
+ * de consulta. Só interfaces, sem lógica — é o mesmo contrato que o
+ * front consome, para as duas pontas não divergirem. Portado de
  * `../e-commerce/src/types/enderecos/types.ts`, onde já está definido.
  *
  * ATENDE: RF0026, RF0035, RN0021, RN0022, RN0023, RNF0034

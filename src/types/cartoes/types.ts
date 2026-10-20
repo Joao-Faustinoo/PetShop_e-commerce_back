@@ -3,8 +3,9 @@
  *
  * O QUE FAZ: define o contrato de dados de cartoes.
  *
- * COMO FARÁ: declara as interfaces de entidade, os payloads de criação e
- * alteração e os filtros de consulta. Só interfaces, sem lógica. Portado de
+ * COMO FARÁ: declara as interfaces de entidade, os payloads e os filtros
+ * de consulta. Só interfaces, sem lógica — é o mesmo contrato que o
+ * front consome, para as duas pontas não divergirem. Portado de
  * `../e-commerce/src/types/cartoes/types.ts`, onde já está definido.
  *
  * ATENDE: RF0027, RF0036, RN0024, RN0025
