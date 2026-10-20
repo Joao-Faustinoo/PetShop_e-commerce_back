@@ -137,6 +137,9 @@ model Cliente {
   enderecos Endereco[]
   cartoes   Cartao[]
   pets      Pet[]
+  cupons    Cupom[]
+  carrinho  Carrinho?
+  pedidos   Pedido[]
 
   @@index([nome])
   @@map("cliente")
@@ -179,6 +182,8 @@ model Endereco {
   tipoResidencia TipoResidencia @relation(fields: [tipoResidenciaId], references: [id])
   tipoLogradouro TipoLogradouro @relation(fields: [tipoLogradouroId], references: [id])
 
+  pedidos Pedido[]
+
   @@index([clienteId])
   @@map("endereco")
 }
@@ -196,6 +201,8 @@ model Cartao {
 
   cliente  Cliente        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
   bandeira BandeiraCartao @relation(fields: [bandeiraId], references: [id])
+
+  pagamentos Pagamento[]
 
   @@index([clienteId])
   @@map("cartao")
@@ -215,4 +222,312 @@ model Pet {
 
   @@index([clienteId])
   @@map("pet")
+}
+
+// ---------------------------------------------------------------------------
+// Grupo Produtos — fatia necessária ao catálogo e ao carrinho
+// ---------------------------------------------------------------------------
+
+/// RN0013: a margem deste grupo define o valor de venda a partir do custo.
+model GrupoPrecificacao {
+  id          Int     @id @default(autoincrement())
+  nome        String  @unique
+  margemLucro Decimal @map("margem_lucro") @db.Decimal(6, 2)
+
+  produtos Produto[]
+
+  @@map("grupo_precificacao")
+}
+
+model Marca {
+  id   Int    @id @default(autoincrement())
+  nome String @unique
+
+  produtos Produto[]
+
+  @@map("marca")
+}
+
+/// RN0012: um produto pode estar associado a mais de uma categoria.
+model Categoria {
+  id   Int    @id @default(autoincrement())
+  nome String @unique
+
+  produtos ProdutoCategoria[]
+
+  @@map("categoria")
+}
+
+model Cor {
+  id   Int    @id @default(autoincrement())
+  nome String @unique
+
+  produtos Produto[]
+
+  @@map("cor")
+}
+
+model Material {
+  id   Int    @id @default(autoincrement())
+  nome String @unique
+
+  produtos Produto[]
+
+  @@map("material")
+}
+
+/// Metadados do porte, usados nos filtros do catálogo. O porte do produto em
+/// si é gravado no enum PorteSigla, como no cadastro de pet.
+model Porte {
+  id      Int        @id @default(autoincrement())
+  sigla   PorteSigla @unique
+  nome    String
+  pesoMin Decimal    @map("peso_min") @db.Decimal(5, 2)
+  pesoMax Decimal    @map("peso_max") @db.Decimal(5, 2)
+
+  @@map("porte")
+}
+
+/// RN0050: toda entrada em estoque identifica o fornecedor.
+model Fornecedor {
+  id   Int    @id @default(autoincrement())
+  nome String @unique
+  cnpj String @unique @db.VarChar(18)
+
+  itensEstoque ItemEstoque[]
+
+  @@map("fornecedor")
+}
+
+/// RF0011-RF0016 e RNF0021 (SKU único). O valor de venda nasce do custo e da
+/// margem do grupo de precificação (RN0013).
+model Produto {
+  id                  Int        @id @default(autoincrement())
+  sku                 String     @unique @db.VarChar(16)
+  nome                String
+  descricao           String
+  marcaId             Int        @map("marca_id")
+  especie             Especie
+  porte               PorteSigla
+  corId               Int        @map("cor_id")
+  materialId          Int        @map("material_id")
+  altura              Decimal    @db.Decimal(6, 2)
+  largura             Decimal    @db.Decimal(6, 2)
+  profundidade        Decimal    @db.Decimal(6, 2)
+  peso                Decimal    @db.Decimal(6, 3)
+  codigoBarras        String     @unique @map("codigo_barras") @db.VarChar(20)
+  grupoPrecificacaoId Int        @map("grupo_precificacao_id")
+  valorCusto          Decimal    @map("valor_custo") @db.Decimal(10, 2)
+  valorVenda          Decimal    @map("valor_venda") @db.Decimal(10, 2)
+  ativo               Boolean    @default(true)
+  imagem              String?
+  totalVendido        Int        @default(0) @map("total_vendido")
+  criadoEm            DateTime   @default(now()) @map("criado_em")
+  atualizadoEm        DateTime   @updatedAt @map("atualizado_em")
+
+  marca             Marca             @relation(fields: [marcaId], references: [id])
+  cor               Cor               @relation(fields: [corId], references: [id])
+  material          Material          @relation(fields: [materialId], references: [id])
+  grupoPrecificacao GrupoPrecificacao @relation(fields: [grupoPrecificacaoId], references: [id])
+
+  categorias    ProdutoCategoria[]
+  itensEstoque  ItemEstoque[]
+  itensCarrinho ItemCarrinho[]
+  itensPedido   ItemPedido[]
+
+  @@index([nome])
+  @@index([ativo])
+  @@map("produto")
+}
+
+/// RN0012: tabela de ligação entre o produto e suas categorias.
+model ProdutoCategoria {
+  produtoId   Int @map("produto_id")
+  categoriaId Int @map("categoria_id")
+
+  produto   Produto   @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  categoria Categoria @relation(fields: [categoriaId], references: [id])
+
+  @@id([produtoId, categoriaId])
+  @@map("produto_categoria")
+}
+
+// ---------------------------------------------------------------------------
+// Grupo Estoque — somente a entrada, que sustenta a validação da RN0031
+// ---------------------------------------------------------------------------
+
+/// RN0050: produto, quantidade, custo, fornecedor e data são obrigatórios.
+/// RN0061 e RN0062: quantidade maior que zero e custo sempre informado.
+/// O saldo disponível de um produto é a soma das quantidades dos seus lotes;
+/// a baixa em estoque (RF0053) está fora do escopo desta fase.
+model ItemEstoque {
+  id           Int      @id @default(autoincrement())
+  produtoId    Int      @map("produto_id")
+  quantidade   Int
+  valorCusto   Decimal  @map("valor_custo") @db.Decimal(10, 2)
+  fornecedorId Int      @map("fornecedor_id")
+  dataEntrada  DateTime @map("data_entrada") @db.Date
+
+  produto    Produto    @relation(fields: [produtoId], references: [id])
+  fornecedor Fornecedor @relation(fields: [fornecedorId], references: [id])
+
+  @@index([produtoId])
+  @@map("item_estoque")
+}
+
+// ---------------------------------------------------------------------------
+// Grupo Vendas — carrinho, cupom e pedido
+// ---------------------------------------------------------------------------
+
+enum TipoCupom {
+  TROCA
+  PROMOCIONAL
+}
+
+enum SituacaoPedido {
+  EM_PROCESSAMENTO
+  APROVADA
+  REPROVADA
+  EM_TRANSPORTE
+  ENTREGUE
+  EM_TROCA
+  TROCA_AUTORIZADA
+  TROCADO
+}
+
+enum FormaPagamento {
+  CARTAO
+  CUPOM_TROCA
+  CUPOM_PROMOCIONAL
+}
+
+/// RF0037. O cupom promocional é geral, sem dono; o de troca pertence ao
+/// cliente que o recebeu (RN0036).
+model Cupom {
+  id        Int       @id @default(autoincrement())
+  codigo    String    @unique @db.VarChar(24)
+  tipo      TipoCupom
+  valor     Decimal   @db.Decimal(10, 2)
+  validade  DateTime  @db.Date
+  utilizado Boolean   @default(false)
+  clienteId Int?      @map("cliente_id")
+  criadoEm  DateTime  @default(now()) @map("criado_em")
+
+  cliente    Cliente?    @relation(fields: [clienteId], references: [id])
+  pagamentos Pagamento[]
+
+  @@index([clienteId])
+  @@map("cupom")
+}
+
+/// RF0031: repositório temporário de itens, um por cliente.
+model Carrinho {
+  id           Int      @id @default(autoincrement())
+  clienteId    Int      @unique @map("cliente_id")
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  cliente Cliente        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  itens   ItemCarrinho[]
+
+  @@map("carrinho")
+}
+
+/// RF0032: a quantidade é editável na adição e na visualização do carrinho.
+model ItemCarrinho {
+  id            Int     @id @default(autoincrement())
+  carrinhoId    Int     @map("carrinho_id")
+  produtoId     Int     @map("produto_id")
+  quantidade    Int
+  valorUnitario Decimal @map("valor_unitario") @db.Decimal(10, 2)
+
+  carrinho Carrinho @relation(fields: [carrinhoId], references: [id], onDelete: Cascade)
+  produto  Produto  @relation(fields: [produtoId], references: [id])
+
+  @@unique([carrinhoId, produtoId])
+  @@index([carrinhoId])
+  @@map("item_carrinho")
+}
+
+/// RF0033 e RF0038: a compra nasce com a situação EM_PROCESSAMENTO.
+model Pedido {
+  id                Int            @id @default(autoincrement())
+  numero            String         @unique @db.VarChar(16)
+  clienteId         Int            @map("cliente_id")
+  enderecoEntregaId Int            @map("endereco_entrega_id")
+  frete             Decimal        @db.Decimal(10, 2)
+  subtotal          Decimal        @db.Decimal(10, 2)
+  total             Decimal        @db.Decimal(10, 2)
+  situacao          SituacaoPedido @default(EM_PROCESSAMENTO)
+  dataCompra        DateTime       @default(now()) @map("data_compra")
+  /// RN0036: código do cupom gerado com a sobra dos cupons utilizados.
+  cupomTrocoCodigo  String?        @map("cupom_troco_codigo") @db.VarChar(24)
+
+  cliente         Cliente  @relation(fields: [clienteId], references: [id])
+  enderecoEntrega Endereco @relation(fields: [enderecoEntregaId], references: [id])
+
+  itens      ItemPedido[]
+  pagamentos Pagamento[]
+
+  @@index([clienteId])
+  @@index([situacao])
+  @@map("pedido")
+}
+
+/// Os dados do produto são copiados no momento da compra, para que alterações
+/// posteriores no catálogo não reescrevam o histórico do pedido.
+model ItemPedido {
+  id            Int     @id @default(autoincrement())
+  pedidoId      Int     @map("pedido_id")
+  produtoId     Int     @map("produto_id")
+  produtoNome   String  @map("produto_nome")
+  produtoSku    String  @map("produto_sku") @db.VarChar(16)
+  quantidade    Int
+  valorUnitario Decimal @map("valor_unitario") @db.Decimal(10, 2)
+  subtotal      Decimal @db.Decimal(10, 2)
+
+  pedido  Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  produto Produto @relation(fields: [produtoId], references: [id])
+
+  @@index([pedidoId])
+  @@map("item_pedido")
+}
+
+/// RF0037 e RN0034: a compra pode ser quitada por vários cartões e cupons.
+/// Cada parcela do pagamento é uma linha desta tabela.
+model Pagamento {
+  id       Int            @id @default(autoincrement())
+  pedidoId Int            @map("pedido_id")
+  forma    FormaPagamento
+  valor    Decimal        @db.Decimal(10, 2)
+  cartaoId Int?           @map("cartao_id")
+  cupomId  Int?           @map("cupom_id")
+
+  pedido Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  cartao Cartao? @relation(fields: [cartaoId], references: [id])
+  cupom  Cupom?  @relation(fields: [cupomId], references: [id])
+
+  @@index([pedidoId])
+  @@map("pagamento")
+}
+
+// ---------------------------------------------------------------------------
+// Grupo Sistema
+// ---------------------------------------------------------------------------
+
+/// RNF0012: toda operação de escrita registra data, hora, usuário responsável
+/// e os dados alterados.
+model LogTransacao {
+  id              Int      @id @default(autoincrement())
+  dataHora        DateTime @default(now()) @map("data_hora")
+  usuarioId       Int      @map("usuario_id")
+  operacao        String   @db.VarChar(20)
+  entidade        String   @db.VarChar(40)
+  entidadeId      String?  @map("entidade_id") @db.VarChar(24)
+  dadosAnteriores Json?    @map("dados_anteriores")
+  dadosNovos      Json?    @map("dados_novos")
+
+  @@index([entidade, entidadeId])
+  @@index([dataHora])
+  @@map("log_transacao")
 }

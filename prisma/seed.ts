@@ -1,20 +1,22 @@
 /**
  * [MODEL] Carga inicial do banco
  *
- * O QUE FAZ: popula as tabelas de domínio na implantação do sistema.
+ * O QUE FAZ: popula as tabelas de domínio, a base de clientes, o
+ * catálogo, o estoque e os cupons na implantação do sistema.
  *
- * COMO FARÁ: insere os registros das 14 tabelas de domínio — grupos de
- * precificação, marcas, categorias, espécies, portes, cores, materiais,
- * fornecedores, bandeiras, tipos de residência, logradouro e telefone, e
- * motivos de ativação e inativação. O conteúdo pode ser transportado de
- * `../e-commerce/src/mock/dominios/mock.ts`, que já o contém.
+ * COMO FARÁ: insere os registros das tabelas de domínio — grupos de
+ * precificação, marcas, categorias, portes, cores, materiais,
+ * fornecedores, bandeiras, tipos de residência, logradouro e telefone —,
+ * uma base de clientes para exercitar as consultas da RF0024, os 20
+ * produtos do catálogo com seus lotes de estoque e os cupons de troca e
+ * promocionais. Os dados do catálogo vêm de `./catalogo.ts`, transportados
+ * dos mocks do front, para que banco e front mostrem o mesmo acervo.
  *
- * ATENDE: RNF0013
+ * ATENDE: RF0011-RF0016, RF0024, RF0037, RF0045, RN0012, RN0013, RN0036,
+ * RN0050, RNF0013
  *
- * ESTADO: seguem as 4 tabelas de domínio que o recorte de clientes
- * referencia, mais uma base de clientes para exercitar as consultas da
- * RF0024. As outras 10 tabelas entram junto com as fatias que as usam —
- * seriam órfãs enquanto Produto e Estoque não existirem no schema.
+ * ESTADO: falta a carga dos motivos de ativação e inativação de produto,
+ * que o schema ainda não modela.
  *
  * A carga é idempotente: `upsert` por id deixa rodar `npm run seed` quantas
  * vezes for preciso sem duplicar linha nem quebrar chave única.
@@ -22,12 +24,83 @@
 
 import { Genero, PrismaClient } from '@prisma/client';
 
+import {
+  categorias,
+  cores,
+  cupons,
+  fornecedores,
+  gruposPrecificacao,
+  marcas,
+  materiais,
+  portes,
+  ProdutoSeed,
+  produtos,
+} from './catalogo';
+
 const prisma = new PrismaClient();
 
 const apenasDigitos = (valor: string): string => valor.replace(/\D/g, '');
 
 /** RNF0035: mesmo formato gerado pelo model — CLI-0000. */
 const codigoDe = (id: number): string => `CLI-${String(id).padStart(4, '0')}`;
+
+/** Data a `dias` de hoje, à meia-noite UTC, para as colunas `@db.Date`. */
+const emDias = (dias: number): Date => {
+  const data = new Date();
+  data.setUTCDate(data.getUTCDate() + dias);
+
+  return new Date(data.toISOString().slice(0, 10));
+};
+
+/**
+ * RN0013: o valor de venda nasce do custo acrescido da margem do grupo de
+ * precificação. Calcular aqui — em vez de gravar o preço pronto — faz a
+ * carga nascer coerente com a regra, e não com um número transcrito.
+ */
+const precificar = (valorCusto: number, grupoId: number): number => {
+  const grupo = gruposPrecificacao.find(g => g.id === grupoId);
+  const margem = grupo?.margemLucro ?? 0;
+
+  return Number((valorCusto * (1 + margem / 100)).toFixed(2));
+};
+
+/**
+ * RN0050, RN0061 e RN0062: o saldo de um produto é a soma de lotes, e todo
+ * lote tem fornecedor, quantidade positiva e custo. Converte o saldo único
+ * do catálogo em um ou dois lotes — dois quando há volume para dividir, de
+ * modo que a soma exercite o cálculo e não um lote isolado.
+ *
+ * O id é derivado do produto para a carga continuar idempotente: rodar o
+ * seed de novo reescreve os mesmos lotes em vez de empilhar duplicatas.
+ */
+const lotesDoProduto = (produto: ProdutoSeed) => {
+  if (produto.quantidadeEstoque === 0) return [];
+
+  const metade = Math.floor(produto.quantidadeEstoque / 2);
+  const quantidades =
+    produto.quantidadeEstoque >= 10 && metade > 0
+      ? [metade, produto.quantidadeEstoque - metade]
+      : [produto.quantidadeEstoque];
+
+  return quantidades.map((quantidade, indice) => ({
+    id: produto.id * 10 + indice,
+    produtoId: produto.id,
+    quantidade,
+    valorCusto: produto.valorCusto,
+    fornecedorId: ((produto.id + indice) % fornecedores.length) + 1,
+    dataEntrada: emDias(-(30 * (indice + 1) + produto.id)),
+  }));
+};
+
+/**
+ * O `id` explícito usado na carga não avança a sequência do Postgres; sem
+ * este acerto, o primeiro POST na tabela tentaria reusar o id 1 e colidiria.
+ */
+const ajustarSequencia = async (tabela: string): Promise<void> => {
+  await prisma.$executeRawUnsafe(
+    `SELECT setval(pg_get_serial_sequence('${tabela}', 'id'), (SELECT COALESCE(MAX(id), 1) FROM ${tabela}))`,
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Tabelas de domínio (RNF0013)
@@ -279,18 +352,176 @@ const carregarClientes = async (): Promise<void> => {
     });
   }
 
-  // O `id` explícito acima não avança a sequência do Postgres; sem este
-  // acerto, o primeiro POST /clientes tentaria reusar o id 1 e colidiria.
-  await prisma.$executeRawUnsafe(
-    `SELECT setval(pg_get_serial_sequence('cliente', 'id'), (SELECT COALESCE(MAX(id), 1) FROM cliente))`,
-  );
+  await ajustarSequencia('cliente');
 
   console.log(`Clientes: ${clientes.length} cadastrados, cada um com telefone e 2 endereços.`);
+};
+
+/**
+ * As 7 tabelas de domínio que o produto referencia. Entram antes do
+ * catálogo porque são as chaves estrangeiras dele.
+ */
+const carregarDominiosDoCatalogo = async (): Promise<void> => {
+  for (const item of gruposPrecificacao) {
+    await prisma.grupoPrecificacao.upsert({
+      where: { id: item.id },
+      update: { nome: item.nome, margemLucro: item.margemLucro },
+      create: item,
+    });
+  }
+
+  for (const item of marcas) {
+    await prisma.marca.upsert({ where: { id: item.id }, update: item, create: item });
+  }
+
+  for (const item of categorias) {
+    await prisma.categoria.upsert({ where: { id: item.id }, update: item, create: item });
+  }
+
+  for (const item of cores) {
+    await prisma.cor.upsert({ where: { id: item.id }, update: item, create: item });
+  }
+
+  for (const item of materiais) {
+    await prisma.material.upsert({ where: { id: item.id }, update: item, create: item });
+  }
+
+  for (const item of portes) {
+    await prisma.porte.upsert({ where: { id: item.id }, update: item, create: item });
+  }
+
+  for (const item of fornecedores) {
+    await prisma.fornecedor.upsert({ where: { id: item.id }, update: item, create: item });
+  }
+
+  for (const tabela of [
+    'grupo_precificacao',
+    'marca',
+    'categoria',
+    'cor',
+    'material',
+    'porte',
+    'fornecedor',
+  ]) {
+    await ajustarSequencia(tabela);
+  }
+
+  console.log(
+    `Domínios do catálogo: ${gruposPrecificacao.length} grupos de precificação, ` +
+      `${marcas.length} marcas, ${categorias.length} categorias, ${cores.length} cores, ` +
+      `${materiais.length} materiais, ${portes.length} portes, ` +
+      `${fornecedores.length} fornecedores.`,
+  );
+};
+
+const carregarProdutos = async (): Promise<void> => {
+  for (const produto of produtos) {
+    const dados = {
+      sku: produto.sku,
+      nome: produto.nome,
+      descricao: produto.descricao,
+      marcaId: produto.marcaId,
+      especie: produto.especie,
+      porte: produto.porte,
+      corId: produto.corId,
+      materialId: produto.materialId,
+      altura: produto.altura,
+      largura: produto.largura,
+      profundidade: produto.profundidade,
+      peso: produto.peso,
+      codigoBarras: produto.codigoBarras,
+      grupoPrecificacaoId: produto.grupoPrecificacaoId,
+      valorCusto: produto.valorCusto,
+      valorVenda: precificar(produto.valorCusto, produto.grupoPrecificacaoId),
+      ativo: produto.ativo,
+      // Convenção do front: o arquivo em public/produtos leva o nome do SKU.
+      imagem: `/produtos/${produto.sku}.png`,
+      totalVendido: produto.totalVendido,
+    };
+
+    await prisma.produto.upsert({
+      where: { id: produto.id },
+      update: dados,
+      create: { id: produto.id, ...dados },
+    });
+
+    // RN0012: as categorias são reescritas por inteiro, e não acumuladas,
+    // para a carga continuar idempotente quando a lista mudar.
+    await prisma.produtoCategoria.deleteMany({ where: { produtoId: produto.id } });
+    await prisma.produtoCategoria.createMany({
+      data: produto.categoriaIds.map(categoriaId => ({
+        produtoId: produto.id,
+        categoriaId,
+      })),
+    });
+  }
+
+  await ajustarSequencia('produto');
+
+  const ativos = produtos.filter(p => p.ativo).length;
+  console.log(
+    `Catálogo: ${produtos.length} produtos (${ativos} ativos, ` +
+      `${produtos.length - ativos} inativos), com preço calculado pela RN0013.`,
+  );
+};
+
+const carregarEstoque = async (): Promise<void> => {
+  const lotes = produtos.flatMap(lotesDoProduto);
+
+  for (const lote of lotes) {
+    const { id, ...dados } = lote;
+    await prisma.itemEstoque.upsert({
+      where: { id },
+      update: dados,
+      create: lote,
+    });
+  }
+
+  await ajustarSequencia('item_estoque');
+
+  const saldo = lotes.reduce((total, lote) => total + lote.quantidade, 0);
+  const semSaldo = produtos.filter(p => p.quantidadeEstoque === 0).length;
+  console.log(
+    `Estoque: ${lotes.length} lotes somando ${saldo} unidades; ` +
+      `${semSaldo} produtos entram sem saldo, para a RN0031 ter o que barrar.`,
+  );
+};
+
+const carregarCupons = async (): Promise<void> => {
+  for (const cupom of cupons) {
+    const dados = {
+      codigo: cupom.codigo,
+      tipo: cupom.tipo,
+      valor: cupom.valor,
+      validade: emDias(cupom.validadeEmDias),
+      utilizado: cupom.utilizado,
+      clienteId: cupom.clienteId,
+    };
+
+    await prisma.cupom.upsert({
+      where: { id: cupom.id },
+      update: dados,
+      create: { id: cupom.id, ...dados },
+    });
+  }
+
+  await ajustarSequencia('cupom');
+
+  const troca = cupons.filter(c => c.tipo === 'TROCA').length;
+  const vencidos = cupons.filter(c => c.validadeEmDias < 0).length;
+  console.log(
+    `Cupons: ${troca} de troca e ${cupons.length - troca} promocionais, ` +
+      `sendo ${vencidos} já vencidos para exercitar a RN0035.`,
+  );
 };
 
 const main = async (): Promise<void> => {
   await carregarDominios();
   await carregarClientes();
+  await carregarDominiosDoCatalogo();
+  await carregarProdutos();
+  await carregarEstoque();
+  await carregarCupons();
 };
 
 main()
