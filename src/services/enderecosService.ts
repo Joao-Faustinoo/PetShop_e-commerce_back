@@ -105,4 +105,67 @@ export const enderecosService = {
 
     return paraEndereco(linha);
   },
+
+  /** RNF0034: altera o endereço sem tocar no resto do cadastro. */
+  async alterar(
+    clienteId: number,
+    id: number,
+    payload: CriarEnderecoPayload,
+  ): Promise<Endereco> {
+    const existente = await prisma.endereco.findFirst({ where: { id, clienteId } });
+
+    if (!existente) throw ApiError.naoEncontrado('Endereço não encontrado.');
+
+    const linha = await prisma.endereco.update({
+      where: { id },
+      data: {
+        apelido: payload.apelido.trim(),
+        tipo: payload.tipo,
+        tipoResidenciaId: payload.tipoResidenciaId,
+        tipoLogradouroId: payload.tipoLogradouroId,
+        logradouro: payload.logradouro.trim(),
+        numero: payload.numero.trim(),
+        bairro: payload.bairro.trim(),
+        cep: payload.cep.replace(/\D/g, ''),
+        cidade: payload.cidade.trim(),
+        estado: payload.estado.trim().toUpperCase(),
+        pais: payload.pais.trim(),
+        observacoes: payload.observacoes?.trim() || null,
+      },
+    });
+
+    return paraEndereco(linha);
+  },
+
+  /**
+   * RN0021 e RN0022: o cadastro precisa manter ao menos um endereço de
+   * cada tipo, e o endereço de uma entrega já feita não pode sumir.
+   */
+  async remover(clienteId: number, id: number): Promise<void> {
+    const existente = await prisma.endereco.findFirst({ where: { id, clienteId } });
+
+    if (!existente) throw ApiError.naoEncontrado('Endereço não encontrado.');
+
+    const usado = await prisma.pedido.count({ where: { enderecoEntregaId: id } });
+
+    if (usado > 0) {
+      throw ApiError.requisicaoInvalida(
+        'Este endereço foi usado em uma compra e não pode ser excluído.',
+      );
+    }
+
+    const doMesmoTipo = await prisma.endereco.count({
+      where: { clienteId, tipo: existente.tipo },
+    });
+
+    if (doMesmoTipo <= 1) {
+      throw ApiError.requisicaoInvalida(
+        existente.tipo === 'COBRANCA'
+          ? 'É obrigatório manter ao menos um endereço de cobrança.'
+          : 'É obrigatório manter ao menos um endereço de entrega.',
+      );
+    }
+
+    await prisma.endereco.delete({ where: { id } });
+  },
 };

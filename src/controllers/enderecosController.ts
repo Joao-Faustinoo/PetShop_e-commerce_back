@@ -51,4 +51,27 @@ export const enderecosController = {
       next(erro);
     }
   },
+
+  async alterar(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json(
+        await enderecosService.alterar(
+          clienteDaSessao(req),
+          Number(req.params.id),
+          req.body,
+        ),
+      );
+    } catch (erro) {
+      next(erro);
+    }
+  },
+
+  async remover(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      await enderecosService.remover(clienteDaSessao(req), Number(req.params.id));
+      res.status(204).send();
+    } catch (erro) {
+      next(erro);
+    }
+  },
 };

@@ -45,3 +45,25 @@ cartoesRoutes.post(
   validar({ body: criarCartaoSchema }),
   cartoesController.criar,
 );
+
+const idSchema = z.object({
+  id: z.coerce.number().int().positive('Id de cartão inválido.'),
+});
+
+cartoesRoutes.put(
+  '/:id',
+  validar({ params: idSchema, body: criarCartaoSchema }),
+  cartoesController.alterar,
+);
+
+cartoesRoutes.delete(
+  '/:id',
+  validar({ params: idSchema }),
+  cartoesController.remover,
+);
+
+cartoesRoutes.patch(
+  '/:id/preferencial',
+  validar({ params: idSchema }),
+  cartoesController.definirPreferencial,
+);

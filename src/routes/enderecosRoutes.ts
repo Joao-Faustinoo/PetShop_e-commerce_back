@@ -65,3 +65,19 @@ enderecosRoutes.post(
   validar({ body: criarEnderecoSchema }),
   enderecosController.criar,
 );
+
+const idSchema = z.object({
+  id: z.coerce.number().int().positive('Id de endereço inválido.'),
+});
+
+enderecosRoutes.put(
+  '/:id',
+  validar({ params: idSchema, body: criarEnderecoSchema }),
+  enderecosController.alterar,
+);
+
+enderecosRoutes.delete(
+  '/:id',
+  validar({ params: idSchema }),
+  enderecosController.remover,
+);

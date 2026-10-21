@@ -92,4 +92,62 @@ export const cartoesService = {
 
     return paraCartao(linha);
   },
+
+  /** RF0027: o cliente corrige os dados de um cartão já cadastrado. */
+  async alterar(
+    clienteId: number,
+    id: number,
+    payload: CriarCartaoPayload,
+  ): Promise<Cartao> {
+    const existente = await prisma.cartao.findFirst({ where: { id, clienteId } });
+
+    if (!existente) throw ApiError.naoEncontrado('Cartão não encontrado.');
+
+    const linha = await prisma.cartao.update({
+      where: { id },
+      data: {
+        numero: apenasDigitos(payload.numero),
+        nomeImpresso: payload.nomeImpresso.trim(),
+        bandeiraId: payload.bandeiraId,
+        codigoSeguranca: apenasDigitos(payload.codigoSeguranca),
+      },
+    });
+
+    return paraCartao(linha);
+  },
+
+  /**
+   * O cartão usado num pagamento não some: a compra aponta para ele e o
+   * histórico precisa continuar legível.
+   */
+  async remover(clienteId: number, id: number): Promise<void> {
+    const existente = await prisma.cartao.findFirst({ where: { id, clienteId } });
+
+    if (!existente) throw ApiError.naoEncontrado('Cartão não encontrado.');
+
+    const usado = await prisma.pagamento.count({ where: { cartaoId: id } });
+
+    if (usado > 0) {
+      throw ApiError.requisicaoInvalida(
+        'Este cartão foi usado em uma compra e não pode ser excluído.',
+      );
+    }
+
+    await prisma.cartao.delete({ where: { id } });
+  },
+
+  /** Um preferencial por cliente: o novo destrona o anterior. */
+  async definirPreferencial(clienteId: number, id: number): Promise<Cartao> {
+    const existente = await prisma.cartao.findFirst({ where: { id, clienteId } });
+
+    if (!existente) throw ApiError.naoEncontrado('Cartão não encontrado.');
+
+    const linha = await prisma.$transaction(async tx => {
+      await tx.cartao.updateMany({ where: { clienteId }, data: { preferencial: false } });
+
+      return tx.cartao.update({ where: { id }, data: { preferencial: true } });
+    });
+
+    return paraCartao(linha);
+  },
 };
