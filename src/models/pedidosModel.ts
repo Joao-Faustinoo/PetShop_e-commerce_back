@@ -12,9 +12,10 @@
  * ATENDE: RF0033, RF0038, RF0039, RF0040, RNF0035
  */
 
-import { Prisma, SituacaoPedido } from '@prisma/client';
+import { FormaPagamento, Prisma, SituacaoPedido } from '@prisma/client';
 
 import { prisma } from '../config/prisma';
+import { Executor } from '../utils/transacao';
 import { Endereco, TipoEndereco } from '../types/enderecos/types';
 import {
   ItemPedido,
@@ -27,7 +28,34 @@ import { Paginacao } from '../types/common/types';
 import { recorte } from '../utils/paginacao';
 import { logModel } from './logModel';
 
-type Executor = Prisma.TransactionClient | typeof prisma;
+/** Um item da compra, já com o produto copiado pelo service. */
+export interface ItemParaGravar {
+  produtoId: number;
+  produtoNome: string;
+  produtoSku: string;
+  quantidade: number;
+  valorUnitario: number;
+  subtotal: number;
+}
+
+/** Dados da compra, já conferidos e calculados pelo service. */
+export interface DadosPedido {
+  clienteId: number;
+  enderecoEntregaId: number;
+  frete: number;
+  subtotal: number;
+  total: number;
+  itens: ItemParaGravar[];
+}
+
+/** Uma parcela do pagamento: um cartão ou um cupom. */
+export interface DadosPagamento {
+  pedidoId: number;
+  forma: FormaPagamento;
+  valor: number;
+  cartaoId?: number;
+  cupomId?: number;
+}
 
 const comTudo = {
   cliente: { select: { nome: true } },
@@ -184,5 +212,61 @@ export const pedidosModel = {
     });
 
     return linha?.situacao ?? null;
+  },
+
+  /**
+   * RF0038 e RNF0035: a compra nasce EM PROCESSAMENTO e o número sai do
+   * id, no mesmo molde do CLI-0000 e do TRC-0000 — a linha é criada com um
+   * provisório e corrigida na mesma transação, porque o id só existe
+   * depois da inserção.
+   */
+  async criar(dados: DadosPedido, tx: Executor): Promise<number> {
+    const { itens, ...resto } = dados;
+
+    const criado = await tx.pedido.create({
+      data: {
+        ...resto,
+        numero: `TMP-${Date.now().toString(36)}`,
+        situacao: SituacaoPedido.EM_PROCESSAMENTO,
+        itens: { create: itens },
+      },
+      select: { id: true },
+    });
+
+    await tx.pedido.update({
+      where: { id: criado.id },
+      data: { numero: this.numeroDe(criado.id) },
+    });
+
+    return criado.id;
+  },
+
+  /** RF0037 e RN0034: cada parcela da compra é uma linha de pagamento. */
+  async registrarPagamento(dados: DadosPagamento, tx: Executor): Promise<void> {
+    await tx.pagamento.create({ data: dados });
+  },
+
+  /** Os cartões que pagaram a compra, para a simulação da RN0037. */
+  async cartoesDoPagamento(
+    pedidoId: number,
+    tx: Executor,
+  ): Promise<{ numero: string }[]> {
+    const linhas = await tx.pagamento.findMany({
+      where: { pedidoId, forma: 'CARTAO' },
+      include: { cartao: { select: { numero: true } } },
+    });
+
+    return linhas
+      .map(l => l.cartao)
+      .filter((c): c is { numero: string } => c !== null);
+  },
+
+  /** RN0036: registra no pedido o cupom emitido com a sobra dos cupons. */
+  async definirCupomTroco(
+    id: number,
+    codigo: string,
+    tx: Executor,
+  ): Promise<void> {
+    await tx.pedido.update({ where: { id }, data: { cupomTrocoCodigo: codigo } });
   },
 };

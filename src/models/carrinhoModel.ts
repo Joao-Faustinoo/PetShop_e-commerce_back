@@ -31,6 +31,19 @@ export type CarrinhoCompleto = Prisma.CarrinhoGetPayload<{
   include: typeof comProduto;
 }>;
 
+/** Um item pronto para virar linha da compra. */
+export interface ItemParaCompra {
+  produtoId: number;
+  produtoNome: string;
+  produtoSku: string;
+  quantidade: number;
+  valorUnitario: number;
+  altura: number;
+  largura: number;
+  profundidade: number;
+  peso: number;
+}
+
 export const carrinhoModel = {
   /** O carrinho nasce na primeira adição; ler não cria nada. */
   async buscar(clienteId: number): Promise<CarrinhoCompleto | null> {
@@ -136,6 +149,37 @@ export const carrinhoModel = {
         produtoId: i.produtoId,
         produtoNome: i.produto.nome,
         quantidade: i.quantidade,
+      }));
+  },
+
+  /**
+   * Os itens ativos com o que a compra precisa copiar: nome e SKU, que o
+   * ItemPedido guarda para o histórico não mudar quando o catálogo mudar,
+   * e as dimensões, que entram no cálculo do frete (RF0034).
+   */
+  async itensParaCompra(
+    clienteId: number,
+    tx: Executor,
+  ): Promise<ItemParaCompra[]> {
+    const carrinho = await tx.carrinho.findUnique({
+      where: { clienteId },
+      include: { itens: { include: { produto: true } }, },
+    });
+
+    if (!carrinho) return [];
+
+    return carrinho.itens
+      .filter(i => i.expiradoEm === null)
+      .map(i => ({
+        produtoId: i.produtoId,
+        produtoNome: i.produto.nome,
+        produtoSku: i.produto.sku,
+        quantidade: i.quantidade,
+        valorUnitario: i.valorUnitario.toNumber(),
+        altura: i.produto.altura.toNumber(),
+        largura: i.produto.largura.toNumber(),
+        profundidade: i.produto.profundidade.toNumber(),
+        peso: i.produto.peso.toNumber(),
       }));
   },
 

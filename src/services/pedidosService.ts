@@ -20,14 +20,16 @@
  * RN0040, RNF0012
  */
 
-import { Prisma, SituacaoPedido } from '@prisma/client';
+import { SituacaoPedido } from '@prisma/client';
 
-import { prisma } from '../config/prisma';
 import { env } from '../config/env';
 import { carrinhoModel } from '../models/carrinhoModel';
+import { cartoesModel } from '../models/cartoesModel';
+import { enderecosModel } from '../models/enderecosModel';
 import { estoqueModel } from '../models/estoqueModel';
 import { logModel } from '../models/logModel';
 import { pedidosModel } from '../models/pedidosModel';
+import { produtosModel } from '../models/produtosModel';
 import { AlertaDisponibilidade } from '../types/carrinho/types';
 import { Pagina, Paginacao } from '../types/common/types';
 import {
@@ -37,6 +39,7 @@ import {
 } from '../types/pedidos/types';
 import { ApiError } from '../utils/ApiError';
 import { montarPagina } from '../utils/paginacao';
+import { executarEmTransacao } from '../utils/transacao';
 import { carrinhoService } from './carrinhoService';
 import { cuponsService } from './cuponsService';
 
@@ -129,14 +132,9 @@ export const pedidosService = {
   ): Promise<{ pedido: Pedido; alertas: AlertaDisponibilidade[] }> {
     await carrinhoModel.colherExpirados(clienteId);
 
-    const pedidoId = await prisma.$transaction(async tx => {
+    const pedidoId = await executarEmTransacao(async tx => {
       // ------------------------------------------------ carrinho e estoque
-      const carrinho = await tx.carrinho.findUnique({
-        where: { clienteId },
-        include: { itens: { include: { produto: true } } },
-      });
-
-      const itensAtivos = carrinho?.itens.filter(i => i.expiradoEm === null) ?? [];
+      const itensAtivos = await carrinhoModel.itensParaCompra(clienteId, tx);
 
       if (itensAtivos.length === 0) {
         throw ApiError.requisicaoInvalida(
@@ -155,9 +153,11 @@ export const pedidosService = {
       }
 
       // ------------------------------------------------------- endereço
-      const endereco = await tx.endereco.findFirst({
-        where: { id: payload.enderecoEntregaId, clienteId },
-      });
+      const endereco = await enderecosModel.buscarDoCliente(
+        clienteId,
+        payload.enderecoEntregaId,
+        tx,
+      );
 
       if (!endereco) {
         throw ApiError.requisicaoInvalida(
@@ -167,23 +167,11 @@ export const pedidosService = {
 
       // --------------------------------------------------------- valores
       const subtotal = duasCasas(
-        itensAtivos.reduce(
-          (s, i) => s + i.valorUnitario.toNumber() * i.quantidade,
-          0,
-        ),
+        itensAtivos.reduce((s, i) => s + i.valorUnitario * i.quantidade, 0),
       );
 
       // RF0034: o servidor calcula o frete; o valor do cliente é ignorado.
-      const frete = calcularFrete(
-        itensAtivos.map(i => ({
-          quantidade: i.quantidade,
-          altura: i.produto.altura.toNumber(),
-          largura: i.produto.largura.toNumber(),
-          profundidade: i.produto.profundidade.toNumber(),
-          peso: i.produto.peso.toNumber(),
-        })),
-        endereco.estado,
-      );
+      const frete = calcularFrete(itensAtivos, endereco.estado);
 
       const total = duasCasas(subtotal + frete);
 
@@ -225,34 +213,24 @@ export const pedidosService = {
 
       // -------------------------------------------------- cria o pedido
       // RF0038: toda compra nasce EM PROCESSAMENTO.
-      const criado = await tx.pedido.create({
-        data: {
-          numero: `TMP-${Date.now().toString(36)}`,
+      const pedidoCriadoId = await pedidosModel.criar(
+        {
           clienteId,
           enderecoEntregaId: endereco.id,
           frete,
           subtotal,
           total,
-          situacao: SituacaoPedido.EM_PROCESSAMENTO,
-          itens: {
-            create: itensAtivos.map(i => ({
-              produtoId: i.produtoId,
-              produtoNome: i.produto.nome,
-              produtoSku: i.produto.sku,
-              quantidade: i.quantidade,
-              valorUnitario: i.valorUnitario,
-              subtotal: duasCasas(i.valorUnitario.toNumber() * i.quantidade),
-            })),
-          },
+          itens: itensAtivos.map(i => ({
+            produtoId: i.produtoId,
+            produtoNome: i.produtoNome,
+            produtoSku: i.produtoSku,
+            quantidade: i.quantidade,
+            valorUnitario: i.valorUnitario,
+            subtotal: duasCasas(i.valorUnitario * i.quantidade),
+          })),
         },
-        select: { id: true },
-      });
-
-      // RNF0035: o número sai do id, como o código do cliente.
-      await tx.pedido.update({
-        where: { id: criado.id },
-        data: { numero: pedidosModel.numeroDe(criado.id) },
-      });
+        tx,
+      );
 
       // Pagamentos: os cupons entram pelo valor realmente consumido.
       let restanteEmCupons = valorEmCupons;
@@ -261,14 +239,15 @@ export const pedidosService = {
         const valor = duasCasas(Math.min(cupom.valor, restanteEmCupons));
         restanteEmCupons = duasCasas(restanteEmCupons - valor);
 
-        await tx.pagamento.create({
-          data: {
-            pedidoId: criado.id,
+        await pedidosModel.registrarPagamento(
+          {
+            pedidoId: pedidoCriadoId,
             forma: cupom.tipo === 'TROCA' ? 'CUPOM_TROCA' : 'CUPOM_PROMOCIONAL',
             valor,
             cupomId: cupom.id,
           },
-        });
+          tx,
+        );
       }
 
       for (const pagamento of pagamentosCartao) {
@@ -276,22 +255,25 @@ export const pedidosService = {
           throw ApiError.requisicaoInvalida('Informe o cartão de cada pagamento.');
         }
 
-        const cartao = await tx.cartao.findFirst({
-          where: { id: pagamento.cartaoId, clienteId },
-        });
+        const cartao = await cartoesModel.buscarDoCliente(
+          clienteId,
+          pagamento.cartaoId,
+          tx,
+        );
 
         if (!cartao) {
           throw ApiError.requisicaoInvalida('Cartão inválido para este cliente.');
         }
 
-        await tx.pagamento.create({
-          data: {
-            pedidoId: criado.id,
+        await pedidosModel.registrarPagamento(
+          {
+            pedidoId: pedidoCriadoId,
             forma: 'CARTAO',
             valor: duasCasas(pagamento.valor),
             cartaoId: cartao.id,
           },
-        });
+          tx,
+        );
       }
 
       await logModel.registrar(
@@ -299,33 +281,31 @@ export const pedidosService = {
           usuarioId,
           operacao: 'INSERCAO',
           entidade: 'Pedido',
-          entidadeId: criado.id,
+          entidadeId: pedidoCriadoId,
           depois: { status: 'EM_PROCESSAMENTO', total },
         },
         tx,
       );
 
       // ------------------------------------------ RN0037: valida e decide
-      const cartoesDoPedido = await tx.pagamento.findMany({
-        where: { pedidoId: criado.id, forma: 'CARTAO' },
-        include: { cartao: { select: { numero: true } } },
-      });
-
-      const recusado = cartoesDoPedido.find(
-        p => p.cartao && !operadoraAceita(p.cartao.numero),
+      const cartoesDoPedido = await pedidosModel.cartoesDoPagamento(
+        pedidoCriadoId,
+        tx,
       );
+
+      const recusado = cartoesDoPedido.find(c => !operadoraAceita(c.numero));
 
       // RN0038: aprovada ou reprovada conforme a validação.
       const situacao = recusado ? SituacaoPedido.REPROVADA : SituacaoPedido.APROVADA;
 
-      await tx.pedido.update({ where: { id: criado.id }, data: { situacao } });
+      await pedidosModel.alterarSituacao(pedidoCriadoId, situacao, tx);
 
       await logModel.registrar(
         {
           usuarioId,
           operacao: 'ALTERACAO',
           entidade: 'Pedido',
-          entidadeId: criado.id,
+          entidadeId: pedidoCriadoId,
           antes: { status: 'EM_PROCESSAMENTO' },
           depois: {
             status: situacao,
@@ -339,10 +319,11 @@ export const pedidosService = {
         // RF0053 e RN0028: a baixa só acontece em compra efetivada.
         for (const item of itensAtivos) {
           await estoqueModel.darBaixa(item.produtoId, item.quantidade, tx);
-          await tx.produto.update({
-            where: { id: item.produtoId },
-            data: { totalVendido: { increment: item.quantidade } },
-          });
+          await produtosModel.incrementarTotalVendido(
+            item.produtoId,
+            item.quantidade,
+            tx,
+          );
         }
 
         await cuponsService.marcarUtilizados(cupons.map(c => c.id), tx);
@@ -351,10 +332,11 @@ export const pedidosService = {
         if (troco > 0) {
           const cupomTroco = await cuponsService.emitir(clienteId, troco, tx);
 
-          await tx.pedido.update({
-            where: { id: criado.id },
-            data: { cupomTrocoCodigo: cupomTroco.codigo },
-          });
+          await pedidosModel.definirCupomTroco(
+            pedidoCriadoId,
+            cupomTroco.codigo,
+            tx,
+          );
         }
       }
 
@@ -362,8 +344,8 @@ export const pedidosService = {
       // eles apenas voltam a ficar livres, sem baixa nenhuma.
       await carrinhoModel.esvaziar(clienteId, tx);
 
-      return criado.id;
-    }, { timeout: 20000 });
+      return pedidoCriadoId;
+    }, 20000);
 
     return { pedido: await this.buscarPorId(pedidoId), alertas: [] };
   },
@@ -406,7 +388,7 @@ export const pedidosService = {
     if (atual === null) throw ApiError.naoEncontrado('Pedido não encontrado.');
     if (atual !== de) throw ApiError.requisicaoInvalida(mensagem);
 
-    await prisma.$transaction(async tx => {
+    await executarEmTransacao(async tx => {
       await pedidosModel.alterarSituacao(id, para, tx);
       await logModel.registrar(
         {

@@ -26,7 +26,16 @@ import { prisma } from '../config/prisma';
 /** Quem executa uma consulta: o cliente único ou o `tx` de uma transação. */
 export type Executor = Prisma.TransactionClient | typeof prisma;
 
-/** Roda o callback dentro de uma transação: ou tudo vale, ou nada vale. */
+/**
+ * Roda o callback dentro de uma transação: ou tudo vale, ou nada vale.
+ *
+ * `timeoutMs` estende o limite padrão do Prisma. O checkout precisa dele:
+ * numa só transação ele confere o carrinho, calcula o frete, valida os
+ * cupons, grava pedido, itens e pagamentos, simula a operadora, dá baixa
+ * no estoque e emite o cupom de troco.
+ */
 export const executarEmTransacao = <T>(
   operacao: (tx: Prisma.TransactionClient) => Promise<T>,
-): Promise<T> => prisma.$transaction(operacao);
+  timeoutMs?: number,
+): Promise<T> =>
+  prisma.$transaction(operacao, timeoutMs ? { timeout: timeoutMs } : undefined);

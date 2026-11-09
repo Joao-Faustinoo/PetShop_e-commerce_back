@@ -18,6 +18,7 @@ import { prisma } from '../config/prisma';
 import { Paginacao } from '../types/common/types';
 import { Produto, ProdutoFiltros } from '../types/produtos/types';
 import { recorte } from '../utils/paginacao';
+import { Executor } from '../utils/transacao';
 import { estoqueModel } from './estoqueModel';
 
 const comCategorias = {
@@ -121,5 +122,21 @@ export const produtosModel = {
     const saldo = await estoqueModel.saldo(id);
 
     return paraProduto(linha, saldo.disponivel);
+  },
+
+  /**
+   * Acompanha a venda efetivada. Alimenta a ordenação por mais vendidos e
+   * é o número de que a RF0013 precisará para decidir a inativação
+   * automática por falta de saída.
+   */
+  async incrementarTotalVendido(
+    produtoId: number,
+    quantidade: number,
+    tx: Executor,
+  ): Promise<void> {
+    await tx.produto.update({
+      where: { id: produtoId },
+      data: { totalVendido: { increment: quantidade } },
+    });
   },
 };
