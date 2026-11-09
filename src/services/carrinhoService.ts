@@ -13,11 +13,9 @@
  * ATENDE: RF0031, RF0032, RN0031, RN0032, RN0044, RNF0042
  */
 
-import { Prisma } from '@prisma/client';
-
-import { prisma } from '../config/prisma';
 import { env } from '../config/env';
 import { carrinhoModel, CarrinhoCompleto } from '../models/carrinhoModel';
+import { enderecosModel } from '../models/enderecosModel';
 import { estoqueModel } from '../models/estoqueModel';
 import { produtosModel } from '../models/produtosModel';
 import {
@@ -28,6 +26,7 @@ import {
 } from '../types/carrinho/types';
 import { Produto } from '../types/produtos/types';
 import { ApiError } from '../utils/ApiError';
+import { Executor } from '../utils/transacao';
 import { calcularFrete } from './pedidosService';
 
 const duasCasas = (valor: number): number => Number(valor.toFixed(2));
@@ -254,9 +253,10 @@ export const carrinhoService = {
     clienteId: number,
     enderecoEntregaId: number,
   ): Promise<{ subtotal: number; frete: number; total: number }> {
-    const endereco = await prisma.endereco.findFirst({
-      where: { id: enderecoEntregaId, clienteId },
-    });
+    const endereco = await enderecosModel.buscarDoCliente(
+      clienteId,
+      enderecoEntregaId,
+    );
 
     if (!endereco) {
       throw ApiError.requisicaoInvalida(
@@ -294,31 +294,27 @@ export const carrinhoService = {
    */
   async revalidarDisponibilidade(
     clienteId: number,
-    tx: Prisma.TransactionClient = prisma as unknown as Prisma.TransactionClient,
+    tx: Executor,
   ): Promise<AlertaDisponibilidade[]> {
-    const carrinho = await tx.carrinho.findUnique({
-      where: { clienteId },
-      include: { itens: { include: { produto: true } } },
-    });
-
-    if (!carrinho) return [];
-
+    const itens = await carrinhoModel.itensAtivos(clienteId, tx);
     const alertas: AlertaDisponibilidade[] = [];
 
-    for (const item of carrinho.itens.filter(i => i.expiradoEm === null)) {
-      const emEstoque = await tx.itemEstoque.aggregate({
-        where: { produtoId: item.produtoId },
-        _sum: { quantidade: true },
-      });
-      const saldo = emEstoque._sum.quantidade ?? 0;
+    for (const item of itens) {
+      /*
+       * Compara com `emEstoque`, e não com `disponivel`: o disponível já
+       * desconta os bloqueios de carrinho, inclusive os deste próprio
+       * cliente. Usá-lo faria o item do carrinho parecer indisponível
+       * contra si mesmo, e todo checkout esvaziaria o carrinho.
+       */
+      const { emEstoque: saldo } = await estoqueModel.saldo(item.produtoId, tx);
 
       if (saldo >= item.quantidade) continue;
 
       if (saldo <= 0) {
-        await tx.itemCarrinho.delete({ where: { id: item.id } });
+        await carrinhoModel.removerItemPorId(item.id, tx);
         alertas.push({
           produtoId: item.produtoId,
-          produtoNome: item.produto.nome,
+          produtoNome: item.produtoNome,
           tipo: 'ITEM_REMOVIDO',
           quantidadeAnterior: item.quantidade,
           quantidadeAtual: 0,
@@ -326,13 +322,10 @@ export const carrinhoService = {
         continue;
       }
 
-      await tx.itemCarrinho.update({
-        where: { id: item.id },
-        data: { quantidade: saldo },
-      });
+      await carrinhoModel.ajustarQuantidade(item.id, saldo, tx);
       alertas.push({
         produtoId: item.produtoId,
-        produtoNome: item.produto.nome,
+        produtoNome: item.produtoNome,
         tipo: 'QUANTIDADE_AJUSTADA',
         quantidadeAnterior: item.quantidade,
         quantidadeAtual: saldo,

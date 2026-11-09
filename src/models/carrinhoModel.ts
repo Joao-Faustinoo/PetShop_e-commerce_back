@@ -17,6 +17,7 @@ import { Prisma } from '@prisma/client';
 
 import { prisma } from '../config/prisma';
 import { env } from '../config/env';
+import { Executor } from '../utils/transacao';
 import { limiteDeBloqueio } from './estoqueModel';
 
 const comProduto = {
@@ -113,7 +114,44 @@ export const carrinhoModel = {
     return count > 0;
   },
 
-  async esvaziar(clienteId: number, tx: Prisma.TransactionClient | typeof prisma = prisma): Promise<void> {
+  /**
+   * Os itens que ainda bloqueiam estoque, com o nome do produto. É a base
+   * da revalidação da RN0032, que roda dentro da transação do checkout.
+   */
+  async itensAtivos(
+    clienteId: number,
+    tx: Executor,
+  ): Promise<{ id: number; produtoId: number; produtoNome: string; quantidade: number }[]> {
+    const carrinho = await tx.carrinho.findUnique({
+      where: { clienteId },
+      include: { itens: { include: { produto: { select: { nome: true } } } } },
+    });
+
+    if (!carrinho) return [];
+
+    return carrinho.itens
+      .filter(i => i.expiradoEm === null)
+      .map(i => ({
+        id: i.id,
+        produtoId: i.produtoId,
+        produtoNome: i.produto.nome,
+        quantidade: i.quantidade,
+      }));
+  },
+
+  async ajustarQuantidade(
+    itemId: number,
+    quantidade: number,
+    tx: Executor,
+  ): Promise<void> {
+    await tx.itemCarrinho.update({ where: { id: itemId }, data: { quantidade } });
+  },
+
+  async removerItemPorId(itemId: number, tx: Executor): Promise<void> {
+    await tx.itemCarrinho.delete({ where: { id: itemId } });
+  },
+
+  async esvaziar(clienteId: number, tx: Executor = prisma): Promise<void> {
     const carrinho = await tx.carrinho.findUnique({
       where: { clienteId },
       select: { id: true },
