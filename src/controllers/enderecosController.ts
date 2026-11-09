@@ -31,6 +31,10 @@ const clienteDaSessao = (req: Request): number => {
   return id;
 };
 
+/** RNF0012: quem respondeu pela operação. Para o cliente, é ele mesmo. */
+const usuarioDaSessao = (req: Request): number =>
+  req.usuario?.id ?? clienteDaSessao(req);
+
 export const enderecosController = {
   async listar(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -46,7 +50,13 @@ export const enderecosController = {
     try {
       res
         .status(201)
-        .json(await enderecosService.criar(clienteDaSessao(req), req.body));
+        .json(
+          await enderecosService.criar(
+            clienteDaSessao(req),
+            usuarioDaSessao(req),
+            req.body,
+          ),
+        );
     } catch (erro) {
       next(erro);
     }
@@ -57,6 +67,7 @@ export const enderecosController = {
       res.json(
         await enderecosService.alterar(
           clienteDaSessao(req),
+          usuarioDaSessao(req),
           Number(req.params.id),
           req.body,
         ),
