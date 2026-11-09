@@ -16,4 +16,24 @@
  *   GET    /dominios/:nome
  */
 
-// TODO: implementar os handlers.
+import { NextFunction, Request, Response } from 'express';
+
+import { dominiosService } from '../services/dominiosService';
+
+export const dominiosController = {
+  async listarTodos(_req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json(await dominiosService.listarTodos());
+    } catch (erro) {
+      next(erro);
+    }
+  },
+
+  async listarUm(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json(await dominiosService.listarUm(req.params.nome));
+    } catch (erro) {
+      next(erro);
+    }
+  },
+};

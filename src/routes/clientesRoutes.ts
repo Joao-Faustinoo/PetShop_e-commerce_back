@@ -25,6 +25,7 @@ import { clientesController } from '../controllers/clientesController';
 import { autenticacao } from '../middlewares/autenticacao';
 import { autorizacao } from '../middlewares/autorizacao';
 import { validar } from '../middlewares/validar';
+import { petsDoClienteRoutes } from './petsRoutes';
 import {
   alterarClienteSchema,
   alterarSituacaoSchema,
@@ -82,3 +83,6 @@ clientesRoutes.get(
   validar({ params: idParamSchema }),
   clientesController.listarTransacoes,
 );
+
+/** RN0029: o pet pertence a um cliente, então mora dentro da rota dele. */
+clientesRoutes.use('/:clienteId/pets', petsDoClienteRoutes);
