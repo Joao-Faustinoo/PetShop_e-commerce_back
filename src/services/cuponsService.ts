@@ -4,56 +4,41 @@
  * O QUE FAZ: valida cupons, escolhe quanto de cada um será consumido numa
  * compra e emite o cupom de troco.
  *
- * COMO FARÁ: orquestra o model e aplica as regras do DRS, lançando
- * ApiError quando uma delas é violada. Não conhece `req` nem `res`.
+ * COMO FARÁ: aplica as regras do DRS sobre o `cuponsModel`, lançando
+ * ApiError quando uma delas é violada. Não conhece o Prisma, nem `req`,
+ * nem `res`.
  *
- * ATENDE: RF0037, RN0033, RN0035, RN0036
+ * ATENDE: RF0037, RF0044, RF0045, RN0033, RN0035, RN0036
  */
 
-import { Prisma } from '@prisma/client';
-
-import { prisma } from '../config/prisma';
-import { Cupom, TipoCupom, ValidacaoCupom } from '../types/cupons/types';
+import { cuponsModel } from '../models/cuponsModel';
+import { Cupom, ValidacaoCupom } from '../types/cupons/types';
 import { ApiError } from '../utils/ApiError';
-
-type Executor = Prisma.TransactionClient | typeof prisma;
+import { Executor } from '../utils/transacao';
 
 const duasCasas = (valor: number): number => Number(valor.toFixed(2));
 
-type LinhaCupom = Prisma.CupomGetPayload<Record<string, never>>;
+/**
+ * A data de hoje no fuso de quem usa o sistema, no formato da coluna de
+ * validade. Comparar como texto evita o engano de medir uma coluna `date`
+ * — que o Prisma devolve à meia-noite UTC — contra um horário local: num
+ * fuso atrás de UTC, o cupom que vence hoje pareceria vencido o dia todo.
+ */
+const hoje = (): string => {
+  const agora = new Date();
 
-const paraCupom = (linha: LinhaCupom): Cupom => ({
-  id: linha.id,
-  codigo: linha.codigo,
-  tipo: linha.tipo as TipoCupom,
-  valor: linha.valor.toNumber(),
-  validade: linha.validade.toISOString().slice(0, 10),
-  utilizado: linha.utilizado,
-  clienteId: linha.clienteId ?? undefined,
-});
-
-/** Hoje às 00:00, para a validade do dia ainda valer. */
-const hoje = (): Date => {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-
-  return d;
+  return new Date(agora.getTime() - agora.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 10);
 };
+
+/** A mesma data, como `Date`, para comparar com a coluna no banco. */
+const inicioDeHoje = (): Date => new Date(`${hoje()}T00:00:00.000Z`);
 
 export const cuponsService = {
   /** RF0044: os cupons que o cliente tem para usar. */
   async listarDoCliente(clienteId: number): Promise<Cupom[]> {
-    const linhas = await prisma.cupom.findMany({
-      where: {
-        utilizado: false,
-        validade: { gte: hoje() },
-        // Promocional vale para qualquer cliente; o de troca é nominal.
-        OR: [{ clienteId }, { clienteId: null }],
-      },
-      orderBy: [{ tipo: 'asc' }, { validade: 'asc' }],
-    });
-
-    return linhas.map(paraCupom);
+    return cuponsModel.listarDisponiveis(clienteId, inicioDeHoje());
   },
 
   /**
@@ -61,18 +46,17 @@ export const cuponsService = {
    * entrar no pagamento.
    */
   async validar(codigo: string, clienteId: number): Promise<ValidacaoCupom> {
-    const linha = await prisma.cupom.findUnique({
-      where: { codigo: codigo.trim().toUpperCase() },
-    });
+    const cupom = await cuponsModel.buscarPorCodigo(codigo.trim().toUpperCase());
 
-    if (!linha) return { valido: false, motivo: 'Cupom não encontrado.' };
-    if (linha.utilizado) return { valido: false, motivo: 'Este cupom já foi utilizado.' };
-    if (linha.validade < hoje()) return { valido: false, motivo: 'Este cupom está vencido.' };
-    if (linha.clienteId !== null && linha.clienteId !== clienteId) {
+    if (!cupom) return { valido: false, motivo: 'Cupom não encontrado.' };
+    if (cupom.utilizado) return { valido: false, motivo: 'Este cupom já foi utilizado.' };
+    // O cupom que vence hoje ainda vale hoje.
+    if (cupom.validade < hoje()) return { valido: false, motivo: 'Este cupom está vencido.' };
+    if (cupom.clienteId !== undefined && cupom.clienteId !== clienteId) {
       return { valido: false, motivo: 'Este cupom pertence a outro cliente.' };
     }
 
-    return { valido: true, cupom: paraCupom(linha) };
+    return { valido: true, cupom };
   },
 
   /**
@@ -137,33 +121,23 @@ export const cuponsService = {
   },
 
   /** Marca como usados os cupons que entraram no pagamento. */
-  async marcarUtilizados(ids: number[], tx: Executor = prisma): Promise<void> {
-    if (ids.length === 0) return;
-
-    await tx.cupom.updateMany({
-      where: { id: { in: ids } },
-      data: { utilizado: true },
-    });
+  async marcarUtilizados(ids: number[], tx: Executor): Promise<void> {
+    await cuponsModel.definirUtilizado(ids, true, tx);
   },
 
   /** Devolve ao cliente os cupons de uma compra que não foi aprovada. */
-  async devolver(ids: number[], tx: Executor = prisma): Promise<void> {
-    if (ids.length === 0) return;
-
-    await tx.cupom.updateMany({
-      where: { id: { in: ids } },
-      data: { utilizado: false },
-    });
+  async devolver(ids: number[], tx: Executor): Promise<void> {
+    await cuponsModel.definirUtilizado(ids, false, tx);
   },
 
   /**
-   * RN0036 e RF0044: emite um cupom de troca nominal, usado tanto para o
+   * RN0036 e RF0045: emite um cupom de troca nominal, usado tanto para o
    * troco da compra quanto para devolver o valor de uma troca recebida.
    */
   async emitir(
     clienteId: number,
     valor: number,
-    tx: Executor = prisma,
+    tx: Executor,
     diasValidade = 365,
   ): Promise<Cupom> {
     const validade = new Date();
@@ -175,16 +149,9 @@ export const cuponsService = {
       .toString()
       .padStart(2, '0')}`;
 
-    const linha = await tx.cupom.create({
-      data: {
-        codigo,
-        tipo: 'TROCA',
-        valor: duasCasas(valor),
-        validade,
-        clienteId,
-      },
-    });
-
-    return paraCupom(linha);
+    return cuponsModel.criarDeTroca(
+      { codigo, valor: duasCasas(valor), validade, clienteId },
+      tx,
+    );
   },
 };
