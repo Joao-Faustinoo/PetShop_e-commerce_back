@@ -35,6 +35,7 @@ import {
   ProdutoSeed,
   produtos,
 } from './catalogo';
+import { gerarHistorico, PRIMEIRO_ID_HISTORICO } from './historico';
 
 const prisma = new PrismaClient();
 
@@ -535,6 +536,63 @@ const carregarCupons = async (): Promise<void> => {
   );
 };
 
+/**
+ * RF0055 e RN0072: o gráfico gerencial compara até 24 meses, e o banco só
+ * tem as compras do mês corrente. Este bloco dá ao gráfico o que comparar.
+ *
+ * A faixa de ids é reservada e recriada inteira a cada carga, em vez de
+ * sofrer upsert: assim a semente fixa manda sozinha, e nenhuma execução
+ * antiga sobrevive com dados de uma versão anterior do gerador.
+ *
+ * Não dá baixa em estoque: são registro histórico, e baixar zeraria o
+ * saldo que o catálogo precisa ter hoje para a RN0031 funcionar.
+ */
+const carregarHistorico = async (): Promise<void> => {
+  const precificados = produtos
+    .filter(p => p.ativo)
+    .map(p => ({
+      id: p.id,
+      nome: p.nome,
+      sku: p.sku,
+      valorVenda: precificar(p.valorCusto, p.grupoPrecificacaoId),
+    }));
+
+  const pedidos = gerarHistorico(precificados);
+
+  await prisma.pedido.deleteMany({ where: { id: { gte: PRIMEIRO_ID_HISTORICO } } });
+
+  // Cada cliente entrega no seu próprio endereço de entrega.
+  const enderecos = await prisma.endereco.findMany({
+    where: { tipo: 'ENTREGA' },
+    select: { id: true, clienteId: true },
+  });
+  const entregaDe = new Map(enderecos.map(e => [e.clienteId, e.id]));
+
+  let gravados = 0;
+
+  for (const pedido of pedidos) {
+    const enderecoEntregaId = entregaDe.get(pedido.clienteId);
+
+    if (!enderecoEntregaId) continue;
+
+    const { itens, ...dados } = pedido;
+
+    await prisma.pedido.create({
+      data: { ...dados, enderecoEntregaId, itens: { create: itens } },
+    });
+    gravados += 1;
+  }
+
+  const contam = pedidos.filter(p =>
+    ['APROVADA', 'EM_TRANSPORTE', 'ENTREGUE'].includes(p.situacao),
+  ).length;
+
+  console.log(
+    `Histórico: ${gravados} compras em 24 meses, ${contam} contando para o ` +
+      `gráfico pela RN0074 e ${gravados - contam} reprovadas, que ficam de fora.`,
+  );
+};
+
 const main = async (): Promise<void> => {
   await carregarDominios();
   await carregarClientes();
@@ -542,6 +600,7 @@ const main = async (): Promise<void> => {
   await carregarProdutos();
   await carregarEstoque();
   await carregarCupons();
+  await carregarHistorico();
 };
 
 main()
