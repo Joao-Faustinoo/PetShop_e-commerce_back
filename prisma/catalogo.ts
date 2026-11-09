@@ -83,6 +83,25 @@ export const portes: { id: number; sigla: PorteSigla; nome: string; pesoMin: num
 ];
 
 /** RN0050: toda entrada em estoque identifica o fornecedor. */
+/**
+ * RN0015 e RN0016: a inativação exige motivo além da justificativa, e a
+ * automática usa sempre FORA DE LINHA. O DRS não lista os demais motivos,
+ * então eles são decisão de projeto — documentada nas premissas.
+ */
+export const motivosInativacao: { id: number; nome: string; automatico: boolean }[] = [
+  { id: 1, nome: 'FORA DE LINHA', automatico: true },
+  { id: 2, nome: 'Descontinuado pelo fornecedor', automatico: false },
+  { id: 3, nome: 'Defeito identificado no lote', automatico: false },
+  { id: 4, nome: 'Baixa procura', automatico: false },
+];
+
+/** RN0017: a ativação também é categorizada. */
+export const motivosAtivacao: { id: number; nome: string }[] = [
+  { id: 1, nome: 'Reposição de estoque' },
+  { id: 2, nome: 'Retorno ao catálogo' },
+  { id: 3, nome: 'Correção de inativação indevida' },
+];
+
 export const fornecedores: { id: number; nome: string; cnpj: string }[] = [
   { id: 1, nome: 'Distribuidora PetBrasil', cnpj: '12.345.678/0001-90' },
   { id: 2, nome: 'Importadora AnimalWear', cnpj: '98.765.432/0001-10' },

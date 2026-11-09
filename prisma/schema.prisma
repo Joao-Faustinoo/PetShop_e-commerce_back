@@ -28,7 +28,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // Conexao das consultas: passa pelo pooler do Supabase (porta 6543).
   url       = env("DATABASE_URL")
   // Conexao direta (porta 5432): o `prisma migrate` exige, porque o
@@ -141,8 +141,8 @@ model Cliente {
   carrinho  Carrinho?
   pedidos   Pedido[]
 
-  trocas        Troca[]
-  notificacoes  Notificacao[]
+  trocas       Troca[]
+  notificacoes Notificacao[]
 
   @@index([nome])
   @@map("cliente")
@@ -297,7 +297,8 @@ model Fornecedor {
   nome String @unique
   cnpj String @unique @db.VarChar(18)
 
-  itensEstoque ItemEstoque[]
+  itensEstoque  ItemEstoque[]
+  movimentacoes MovimentacaoEstoque[]
 
   @@map("fornecedor")
 }
@@ -305,28 +306,32 @@ model Fornecedor {
 /// RF0011-RF0016 e RNF0021 (SKU único). O valor de venda nasce do custo e da
 /// margem do grupo de precificação (RN0013).
 model Produto {
-  id                  Int        @id @default(autoincrement())
-  sku                 String     @unique @db.VarChar(16)
-  nome                String
-  descricao           String
-  marcaId             Int        @map("marca_id")
-  especie             Especie
-  porte               PorteSigla
-  corId               Int        @map("cor_id")
-  materialId          Int        @map("material_id")
-  altura              Decimal    @db.Decimal(6, 2)
-  largura             Decimal    @db.Decimal(6, 2)
-  profundidade        Decimal    @db.Decimal(6, 2)
-  peso                Decimal    @db.Decimal(6, 3)
-  codigoBarras        String     @unique @map("codigo_barras") @db.VarChar(20)
-  grupoPrecificacaoId Int        @map("grupo_precificacao_id")
-  valorCusto          Decimal    @map("valor_custo") @db.Decimal(10, 2)
-  valorVenda          Decimal    @map("valor_venda") @db.Decimal(10, 2)
-  ativo               Boolean    @default(true)
-  imagem              String?
-  totalVendido        Int        @default(0) @map("total_vendido")
-  criadoEm            DateTime   @default(now()) @map("criado_em")
-  atualizadoEm        DateTime   @updatedAt @map("atualizado_em")
+  id                    Int        @id @default(autoincrement())
+  sku                   String     @unique @db.VarChar(16)
+  nome                  String
+  descricao             String
+  marcaId               Int        @map("marca_id")
+  especie               Especie
+  porte                 PorteSigla
+  corId                 Int        @map("cor_id")
+  materialId            Int        @map("material_id")
+  altura                Decimal    @db.Decimal(6, 2)
+  largura               Decimal    @db.Decimal(6, 2)
+  profundidade          Decimal    @db.Decimal(6, 2)
+  peso                  Decimal    @db.Decimal(6, 3)
+  codigoBarras          String     @unique @map("codigo_barras") @db.VarChar(20)
+  grupoPrecificacaoId   Int        @map("grupo_precificacao_id")
+  valorCusto            Decimal    @map("valor_custo") @db.Decimal(10, 2)
+  valorVenda            Decimal    @map("valor_venda") @db.Decimal(10, 2)
+  ativo                 Boolean    @default(true)
+  imagem                String?
+  totalVendido          Int        @default(0) @map("total_vendido")
+  /// RN0015 e RN0017: a mudança de situação guarda motivo e justificativa.
+  motivoInativacaoId    Int?       @map("motivo_inativacao_id")
+  motivoAtivacaoId      Int?       @map("motivo_ativacao_id")
+  justificativaSituacao String?    @map("justificativa_situacao")
+  criadoEm              DateTime   @default(now()) @map("criado_em")
+  atualizadoEm          DateTime   @updatedAt @map("atualizado_em")
 
   marca             Marca             @relation(fields: [marcaId], references: [id])
   cor               Cor               @relation(fields: [corId], references: [id])
@@ -338,10 +343,37 @@ model Produto {
   itensCarrinho ItemCarrinho[]
   itensPedido   ItemPedido[]
   itensTroca    ItemTroca[]
+  movimentacoes MovimentacaoEstoque[]
+
+  motivoInativacao MotivoInativacao? @relation(fields: [motivoInativacaoId], references: [id])
+  motivoAtivacao   MotivoAtivacao?   @relation(fields: [motivoAtivacaoId], references: [id])
 
   @@index([nome])
   @@index([ativo])
   @@map("produto")
+}
+
+/// RN0015 e RN0016: a inativação é categorizada, e a automática usa sempre
+/// FORA DE LINHA. São tabelas de domínio, carregadas pelo seed (RNF0013).
+model MotivoInativacao {
+  id         Int     @id @default(autoincrement())
+  nome       String  @unique
+  /// Marca o motivo que o sistema aplica sozinho, sem escolha do admin.
+  automatico Boolean @default(false)
+
+  produtos Produto[]
+
+  @@map("motivo_inativacao")
+}
+
+/// RN0017: a ativação também exige motivo, além da justificativa.
+model MotivoAtivacao {
+  id   Int    @id @default(autoincrement())
+  nome String @unique
+
+  produtos Produto[]
+
+  @@map("motivo_ativacao")
 }
 
 /// RN0012: tabela de ligação entre o produto e suas categorias.
@@ -357,13 +389,42 @@ model ProdutoCategoria {
 }
 
 // ---------------------------------------------------------------------------
-// Grupo Estoque — somente a entrada, que sustenta a validação da RN0031
+// Grupo Estoque — entrada, baixa e reentrada
 // ---------------------------------------------------------------------------
+
+enum TipoMovimentacao {
+  ENTRADA
+  BAIXA
+  REENTRADA
+}
+
+/// O histórico do estoque. É necessário porque a baixa consome os lotes e
+/// apaga o que zera: sem este registro, uma unidade que saiu não deixaria
+/// rastro nenhum, e RF0053 e RF0054 não teriam o que mostrar.
+model MovimentacaoEstoque {
+  id           Int              @id @default(autoincrement())
+  produtoId    Int              @map("produto_id")
+  tipo         TipoMovimentacao
+  quantidade   Int
+  valorCusto   Decimal?         @map("valor_custo") @db.Decimal(10, 2)
+  fornecedorId Int?             @map("fornecedor_id")
+  pedidoId     Int?             @map("pedido_id")
+  trocaId      Int?             @map("troca_id")
+  usuarioId    Int              @map("usuario_id")
+  observacao   String?
+  dataHora     DateTime         @default(now()) @map("data_hora")
+
+  produto    Produto     @relation(fields: [produtoId], references: [id])
+  fornecedor Fornecedor? @relation(fields: [fornecedorId], references: [id])
+
+  @@index([produtoId, dataHora])
+  @@map("movimentacao_estoque")
+}
 
 /// RN0050: produto, quantidade, custo, fornecedor e data são obrigatórios.
 /// RN0061 e RN0062: quantidade maior que zero e custo sempre informado.
-/// O saldo disponível de um produto é a soma das quantidades dos seus lotes;
-/// a baixa em estoque (RF0053) está fora do escopo desta fase.
+/// O saldo de um produto é a soma das quantidades dos seus lotes; o
+/// histórico de entradas e saídas fica em MovimentacaoEstoque.
 model ItemEstoque {
   id           Int      @id @default(autoincrement())
   produtoId    Int      @map("produto_id")
@@ -424,8 +485,8 @@ model Cupom {
   clienteId Int?      @map("cliente_id")
   criadoEm  DateTime  @default(now()) @map("criado_em")
 
-  cliente    Cliente?    @relation(fields: [clienteId], references: [id])
-  pagamentos Pagamento[]
+  cliente     Cliente?    @relation(fields: [clienteId], references: [id])
+  pagamentos  Pagamento[]
   /// RF0044: preenchido quando o cupom nasce da confirmação de uma troca.
   trocaOrigem Troca?
 
@@ -448,11 +509,11 @@ model Carrinho {
 
 /// RF0032: a quantidade é editável na adição e na visualização do carrinho.
 model ItemCarrinho {
-  id            Int     @id @default(autoincrement())
-  carrinhoId    Int     @map("carrinho_id")
-  produtoId     Int     @map("produto_id")
+  id            Int       @id @default(autoincrement())
+  carrinhoId    Int       @map("carrinho_id")
+  produtoId     Int       @map("produto_id")
   quantidade    Int
-  valorUnitario Decimal @map("valor_unitario") @db.Decimal(10, 2)
+  valorUnitario Decimal   @map("valor_unitario") @db.Decimal(10, 2)
   /// RN0044 e RNF0042: preenchido quando o prazo expira. O item deixa de
   /// bloquear estoque, mas continua na lista como "removido", para o
   /// cliente poder devolvê-lo ao carrinho.
@@ -558,21 +619,21 @@ model LogTransacao {
 /// Vive separada do Pedido porque tem itens, motivo e ciclo próprios — e
 /// porque um pedido pode receber mais de uma solicitação ao longo do tempo.
 model Troca {
-  id              Int         @id @default(autoincrement())
+  id                Int         @id @default(autoincrement())
   /// RNF0035 aplicada à troca: código único legível, no formato TRC-0000.
-  numero          String      @unique @db.VarChar(16)
-  pedidoId        Int         @map("pedido_id")
-  clienteId       Int         @map("cliente_id")
-  motivo          String
-  status          StatusTroca @default(EM_TROCA)
+  numero            String      @unique @db.VarChar(16)
+  pedidoId          Int         @map("pedido_id")
+  clienteId         Int         @map("cliente_id")
+  motivo            String
+  status            StatusTroca @default(EM_TROCA)
   /// RN0041: true quando a solicitação cobre todos os itens da compra.
-  trocaTotal      Boolean     @default(false) @map("troca_total")
-  valorTotal      Decimal     @map("valor_total") @db.Decimal(10, 2)
-  dataSolicitacao DateTime    @default(now()) @map("data_solicitacao")
+  trocaTotal        Boolean     @default(false) @map("troca_total")
+  valorTotal        Decimal     @map("valor_total") @db.Decimal(10, 2)
+  dataSolicitacao   DateTime    @default(now()) @map("data_solicitacao")
   /// RF0044: o administrador informa se os itens voltam ao estoque.
-  retornouAoEstoque Boolean?  @map("retornou_ao_estoque")
+  retornouAoEstoque Boolean?    @map("retornou_ao_estoque")
   /// RF0044: cupom emitido na confirmação do recebimento.
-  cupomGeradoId   Int?        @unique @map("cupom_gerado_id")
+  cupomGeradoId     Int?        @unique @map("cupom_gerado_id")
 
   pedido      Pedido      @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
   cliente     Cliente     @relation(fields: [clienteId], references: [id])

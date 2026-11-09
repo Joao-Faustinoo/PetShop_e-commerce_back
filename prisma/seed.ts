@@ -12,11 +12,8 @@
  * promocionais. Os dados do catálogo vêm de `./catalogo.ts`, transportados
  * dos mocks do front, para que banco e front mostrem o mesmo acervo.
  *
- * ATENDE: RF0011-RF0016, RF0024, RF0037, RF0045, RN0012, RN0013, RN0036,
- * RN0050, RNF0013
- *
- * ESTADO: falta a carga dos motivos de ativação e inativação de produto,
- * que o schema ainda não modela.
+ * ATENDE: RF0011-RF0016, RF0024, RF0037, RF0045, RN0012, RN0013, RN0015,
+ * RN0016, RN0017, RN0036, RN0050, RNF0013
  *
  * A carga é idempotente: `upsert` por id deixa rodar `npm run seed` quantas
  * vezes for preciso sem duplicar linha nem quebrar chave única.
@@ -29,6 +26,8 @@ import {
   cores,
   cupons,
   fornecedores,
+  motivosAtivacao,
+  motivosInativacao,
   gruposPrecificacao,
   marcas,
   materiais,
@@ -394,6 +393,23 @@ const carregarDominiosDoCatalogo = async (): Promise<void> => {
     await prisma.fornecedor.upsert({ where: { id: item.id }, update: item, create: item });
   }
 
+  // RN0015, RN0016 e RN0017: a mudança de situação do produto é categorizada.
+  for (const item of motivosInativacao) {
+    await prisma.motivoInativacao.upsert({
+      where: { id: item.id },
+      update: item,
+      create: item,
+    });
+  }
+
+  for (const item of motivosAtivacao) {
+    await prisma.motivoAtivacao.upsert({
+      where: { id: item.id },
+      update: item,
+      create: item,
+    });
+  }
+
   for (const tabela of [
     'grupo_precificacao',
     'marca',
@@ -402,6 +418,8 @@ const carregarDominiosDoCatalogo = async (): Promise<void> => {
     'material',
     'porte',
     'fornecedor',
+    'motivo_inativacao',
+    'motivo_ativacao',
   ]) {
     await ajustarSequencia(tabela);
   }
@@ -410,7 +428,9 @@ const carregarDominiosDoCatalogo = async (): Promise<void> => {
     `Domínios do catálogo: ${gruposPrecificacao.length} grupos de precificação, ` +
       `${marcas.length} marcas, ${categorias.length} categorias, ${cores.length} cores, ` +
       `${materiais.length} materiais, ${portes.length} portes, ` +
-      `${fornecedores.length} fornecedores.`,
+      `${fornecedores.length} fornecedores, ` +
+      `${motivosInativacao.length} motivos de inativação e ` +
+      `${motivosAtivacao.length} de ativação.`,
   );
 };
 
