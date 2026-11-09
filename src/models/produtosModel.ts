@@ -124,6 +124,29 @@ export const produtosModel = {
     return paraProduto(linha, saldo.disponivel);
   },
 
+  /** RN0013: a margem do grupo é o que transforma custo em preço. */
+  async margemDoGrupo(grupoId: number, tx: Executor = prisma): Promise<number | null> {
+    const grupo = await tx.grupoPrecificacao.findUnique({
+      where: { id: grupoId },
+      select: { margemLucro: true },
+    });
+
+    return grupo ? grupo.margemLucro.toNumber() : null;
+  },
+
+  /** RN0051: o custo e o preço mudam juntos quando entra um lote mais caro. */
+  async atualizarPrecificacao(
+    produtoId: number,
+    valorCusto: number,
+    valorVenda: number,
+    tx: Executor,
+  ): Promise<void> {
+    await tx.produto.update({
+      where: { id: produtoId },
+      data: { valorCusto, valorVenda },
+    });
+  },
+
   /**
    * Acompanha a venda efetivada. Alimenta a ordenação por mais vendidos e
    * é o número de que a RF0013 precisará para decidir a inativação

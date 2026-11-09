@@ -19,6 +19,17 @@ import { Produto, ProdutoFiltros } from '../types/produtos/types';
 import { ApiError } from '../utils/ApiError';
 import { montarPagina } from '../utils/paginacao';
 
+/**
+ * RF0052 e RN0013: o valor de venda é o custo acrescido do percentual do
+ * grupo de precificação. É função pura, fora do objeto do service, porque
+ * o estoque também a usa ao recalcular o preço pela RN0051 — e porque
+ * assim ela pode ser conferida sem banco.
+ */
+export const calcularValorVenda = (
+  valorCusto: number,
+  margemPercentual: number,
+): number => Number((valorCusto * (1 + margemPercentual / 100)).toFixed(2));
+
 export const produtosService = {
   /** RF0017: consulta por qualquer campo, isolado ou combinado. */
   async listar(

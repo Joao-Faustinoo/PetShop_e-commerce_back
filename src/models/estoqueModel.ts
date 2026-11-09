@@ -16,9 +16,41 @@ import { Prisma } from '@prisma/client';
 
 import { prisma } from '../config/prisma';
 import { env } from '../config/env';
+import { Paginacao } from '../types/common/types';
+import {
+  EstoqueFiltros,
+  ItemEstoque,
+  MovimentacaoEstoque,
+  TipoMovimentacao,
+} from '../types/estoque/types';
+import { recorte } from '../utils/paginacao';
+import { Executor } from '../utils/transacao';
 
-/** Transação ou cliente normal: as operações servem aos dois. */
-type Executor = Prisma.TransactionClient | typeof prisma;
+/** De onde veio a movimentação: a venda, a troca, ou a entrada manual. */
+export interface OrigemMovimentacao {
+  pedidoId?: number;
+  trocaId?: number;
+  usuarioId?: number;
+  observacao?: string;
+}
+
+export interface DadosMovimentacao extends OrigemMovimentacao {
+  produtoId: number;
+  tipo: TipoMovimentacao;
+  quantidade: number;
+  valorCusto?: number;
+  fornecedorId?: number;
+}
+
+/** RN0050: produto, quantidade, custo, fornecedor e data, todos exigidos. */
+export interface DadosEntrada {
+  produtoId: number;
+  quantidade: number;
+  valorCusto: number;
+  fornecedorId: number;
+  dataEntrada: Date;
+  usuarioId: number;
+}
 
 /**
  * RN0044: o prazo corre a partir do último item incluído, e o carrinho
@@ -130,6 +162,7 @@ export const estoqueModel = {
     produtoId: number,
     quantidade: number,
     tx: Executor = prisma,
+    origem: OrigemMovimentacao = {},
   ): Promise<void> {
     let restante = quantidade;
 
@@ -153,6 +186,14 @@ export const estoqueModel = {
         });
       }
     }
+
+    // RF0053: a saída precisa deixar rastro. Os lotes consumidos são
+    // apagados, então sem este registro a unidade vendida desapareceria
+    // sem deixar como saber que saiu.
+    await this.registrarMovimentacao(
+      { produtoId, tipo: 'BAIXA', quantidade, ...origem },
+      tx,
+    );
   },
 
   /**
@@ -164,6 +205,7 @@ export const estoqueModel = {
     produtoId: number,
     quantidade: number,
     tx: Executor = prisma,
+    origem: OrigemMovimentacao = {},
   ): Promise<void> {
     const referencia = await tx.itemEstoque.findFirst({
       where: { produtoId },
@@ -179,14 +221,166 @@ export const estoqueModel = {
       referencia?.fornecedorId ??
       (await tx.fornecedor.findFirstOrThrow({ select: { id: true } })).id;
 
+    const valorCusto = referencia?.valorCusto ?? produto.valorCusto;
+
     await tx.itemEstoque.create({
       data: {
         produtoId,
         quantidade,
-        valorCusto: referencia?.valorCusto ?? produto.valorCusto,
+        valorCusto,
         fornecedorId,
         dataEntrada: new Date(),
       },
     });
+
+    await this.registrarMovimentacao(
+      {
+        produtoId,
+        tipo: 'REENTRADA',
+        quantidade,
+        valorCusto: valorCusto.toNumber(),
+        fornecedorId,
+        ...origem,
+      },
+      tx,
+    );
+  },
+
+  /** RN0050: o fornecedor da entrada precisa estar registrado. */
+  async fornecedorExiste(id: number, tx: Executor = prisma): Promise<boolean> {
+    return (await tx.fornecedor.findUnique({ where: { id } })) !== null;
+  },
+
+  /** A posição do estoque por produto, como a tela do admin a exibe. */
+  async posicao(filtros: EstoqueFiltros): Promise<ItemEstoque[]> {
+    const produtos = await prisma.produto.findMany({
+      where: filtros.produtoNome
+        ? {
+            OR: [
+              { nome: { contains: filtros.produtoNome, mode: 'insensitive' } },
+              { sku: { contains: filtros.produtoNome, mode: 'insensitive' } },
+            ],
+          }
+        : {},
+      orderBy: { nome: 'asc' },
+      select: { id: true, nome: true, sku: true },
+    });
+
+    const saldos = await this.saldos(produtos.map(p => p.id));
+
+    const custos = await prisma.itemEstoque.groupBy({
+      by: ['produtoId'],
+      where: { produtoId: { in: produtos.map(p => p.id) }, quantidade: { gt: 0 } },
+      _max: { valorCusto: true },
+    });
+    const maiorCusto = new Map(
+      custos.map(c => [c.produtoId, c._max.valorCusto?.toNumber() ?? 0]),
+    );
+
+    const itens = produtos.map(p => {
+      const saldo = saldos.get(p.id);
+
+      return {
+        produtoId: p.id,
+        produtoNome: p.nome,
+        produtoSku: p.sku,
+        quantidadeDisponivel: saldo?.disponivel ?? 0,
+        quantidadeBloqueada: saldo?.bloqueado ?? 0,
+        maiorValorCusto: maiorCusto.get(p.id) ?? 0,
+      };
+    });
+
+    return filtros.apenasSemEstoque
+      ? itens.filter(i => i.quantidadeDisponivel === 0)
+      : itens;
+  },
+
+  /** O registro de uma entrada, saída ou devolução (RF0053, RF0054). */
+  async registrarMovimentacao(
+    dados: DadosMovimentacao,
+    tx: Executor,
+  ): Promise<void> {
+    await tx.movimentacaoEstoque.create({
+      data: { ...dados, usuarioId: dados.usuarioId ?? 0 },
+    });
+  },
+
+  /** RF0051: o lote novo, com fornecedor e data que a RN0050 exige. */
+  async registrarEntrada(
+    dados: DadosEntrada,
+    tx: Executor,
+  ): Promise<void> {
+    await tx.itemEstoque.create({
+      data: {
+        produtoId: dados.produtoId,
+        quantidade: dados.quantidade,
+        valorCusto: dados.valorCusto,
+        fornecedorId: dados.fornecedorId,
+        dataEntrada: dados.dataEntrada,
+      },
+    });
+
+    await this.registrarMovimentacao(
+      {
+        produtoId: dados.produtoId,
+        tipo: 'ENTRADA',
+        quantidade: dados.quantidade,
+        valorCusto: dados.valorCusto,
+        fornecedorId: dados.fornecedorId,
+        usuarioId: dados.usuarioId,
+      },
+      tx,
+    );
+  },
+
+  /**
+   * RN0051: o maior custo entre os lotes **com saldo** daquele produto.
+   * Filtrar pelo saldo importa: um lote antigo e já vendido inflaria o
+   * preço para sempre, mesmo sem nenhuma unidade dele no depósito.
+   */
+  async maiorCustoComSaldo(
+    produtoId: number,
+    tx: Executor = prisma,
+  ): Promise<number | null> {
+    const lote = await tx.itemEstoque.findFirst({
+      where: { produtoId, quantidade: { gt: 0 } },
+      orderBy: { valorCusto: 'desc' },
+      select: { valorCusto: true },
+    });
+
+    return lote ? lote.valorCusto.toNumber() : null;
+  },
+
+  async listarMovimentacoes(
+    produtoId: number | undefined,
+    paginacao: Paginacao,
+  ): Promise<{ itens: MovimentacaoEstoque[]; total: number }> {
+    const where = produtoId ? { produtoId } : {};
+
+    const [linhas, total] = await prisma.$transaction([
+      prisma.movimentacaoEstoque.findMany({
+        where,
+        include: { produto: { select: { nome: true } } },
+        orderBy: [{ dataHora: 'desc' }, { id: 'desc' }],
+        ...recorte(paginacao),
+      }),
+      prisma.movimentacaoEstoque.count({ where }),
+    ]);
+
+    return {
+      itens: linhas.map(l => ({
+        id: l.id,
+        tipo: l.tipo as TipoMovimentacao,
+        produtoId: l.produtoId,
+        produtoNome: l.produto.nome,
+        quantidade: l.quantidade,
+        valorCusto: l.valorCusto?.toNumber() ?? 0,
+        fornecedorId: l.fornecedorId ?? undefined,
+        dataEntrada: l.dataHora.toISOString(),
+        usuarioId: l.usuarioId,
+        observacao: l.observacao ?? undefined,
+      })),
+      total,
+    };
   },
 };
