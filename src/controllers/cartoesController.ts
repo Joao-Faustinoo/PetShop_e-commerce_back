@@ -31,6 +31,10 @@ const clienteDaSessao = (req: Request): number => {
   return id;
 };
 
+/** RNF0012: quem respondeu pela operação. Para o cliente, é ele mesmo. */
+const usuarioDaSessao = (req: Request): number =>
+  req.usuario?.id ?? clienteDaSessao(req);
+
 export const cartoesController = {
   async listar(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -45,7 +49,13 @@ export const cartoesController = {
     try {
       res
         .status(201)
-        .json(await cartoesService.criar(clienteDaSessao(req), req.body));
+        .json(
+          await cartoesService.criar(
+            clienteDaSessao(req),
+            usuarioDaSessao(req),
+            req.body,
+          ),
+        );
     } catch (erro) {
       next(erro);
     }
@@ -56,6 +66,7 @@ export const cartoesController = {
       res.json(
         await cartoesService.alterar(
           clienteDaSessao(req),
+          usuarioDaSessao(req),
           Number(req.params.id),
           req.body,
         ),
@@ -79,6 +90,7 @@ export const cartoesController = {
       res.json(
         await cartoesService.definirPreferencial(
           clienteDaSessao(req),
+          usuarioDaSessao(req),
           Number(req.params.id),
         ),
       );

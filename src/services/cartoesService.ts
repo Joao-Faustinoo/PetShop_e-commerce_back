@@ -3,117 +3,130 @@
  *
  * O QUE FAZ: lista os cartões do cliente e incorpora um novo ao perfil.
  *
- * COMO FARÁ: orquestra o Prisma e aplica as regras do DRS. O número e o
- * código de segurança nunca saem inteiros da API: a tela só precisa dos
- * quatro últimos dígitos para o cliente reconhecer o cartão.
+ * COMO FARÁ: aplica as regras do DRS sobre o `cartoesModel`, sem conhecer
+ * o Prisma nem `req`/`res`. Toda escrita corre dentro de uma transação e
+ * deixa registro no log (RNF0012) — o cartão gravado é mascarado antes de
+ * ir para o registro, porque o log não é lugar de número de cartão.
  *
- * ATENDE: RF0027, RF0036, RN0024, RN0025
+ * ATENDE: RF0027, RF0036, RN0024, RN0025, RNF0012
  */
 
-import { prisma } from '../config/prisma';
+import { cartoesModel } from '../models/cartoesModel';
+import { logModel } from '../models/logModel';
 import { Cartao, CriarCartaoPayload } from '../types/cartoes/types';
 import { ApiError } from '../utils/ApiError';
+import { executarEmTransacao } from '../utils/transacao';
+
+const ENTIDADE = 'Cartao';
 
 const apenasDigitos = (valor: string): string => valor.replace(/\D/g, '');
 
-type LinhaCartao = {
-  id: number;
-  clienteId: number;
-  numero: string;
-  nomeImpresso: string;
-  bandeiraId: number;
-  codigoSeguranca: string;
-  preferencial: boolean;
+/** RN0024: o número precisa ter o comprimento de um cartão de verdade. */
+const normalizar = (payload: CriarCartaoPayload) => {
+  const numero = apenasDigitos(payload.numero);
+
+  if (numero.length < 13 || numero.length > 19) {
+    throw ApiError.requisicaoInvalida('Número de cartão inválido.');
+  }
+
+  return {
+    numero,
+    nomeImpresso: payload.nomeImpresso.trim(),
+    bandeiraId: payload.bandeiraId,
+    codigoSeguranca: apenasDigitos(payload.codigoSeguranca),
+  };
 };
 
-/** O número viaja mascarado; o final é o que identifica o cartão na tela. */
-const paraCartao = (linha: LinhaCartao): Cartao => ({
-  id: linha.id,
-  clienteId: linha.clienteId,
-  numero: `**** **** **** ${linha.numero.slice(-4)}`,
-  nomeImpresso: linha.nomeImpresso,
-  bandeiraId: linha.bandeiraId,
-  codigoSeguranca: '***',
-  preferencial: linha.preferencial,
-});
+/** O cartão precisa ser do cliente da sessão; se não for, não existe. */
+const exigirCartao = async (clienteId: number, id: number): Promise<Cartao> => {
+  const cartao = await cartoesModel.buscarDoCliente(clienteId, id);
+
+  if (!cartao) throw ApiError.naoEncontrado('Cartão não encontrado.');
+
+  return cartao;
+};
 
 export const cartoesService = {
   async listar(clienteId: number): Promise<Cartao[]> {
-    const linhas = await prisma.cartao.findMany({
-      where: { clienteId },
-      orderBy: [{ preferencial: 'desc' }, { id: 'asc' }],
-    });
-
-    return linhas.map(paraCartao);
+    return cartoesModel.listarDoCliente(clienteId);
   },
 
   /**
    * RF0036: o cartão novo é incorporado ao perfil para poder ser usado no
    * pagamento — a compra referencia o cartão por id.
    */
-  async criar(clienteId: number, payload: CriarCartaoPayload): Promise<Cartao> {
-    const numero = apenasDigitos(payload.numero);
-
-    if (numero.length < 13 || numero.length > 19) {
-      throw ApiError.requisicaoInvalida('Número de cartão inválido.');
-    }
+  async criar(
+    clienteId: number,
+    usuarioId: number,
+    payload: CriarCartaoPayload,
+  ): Promise<Cartao> {
+    const dados = normalizar(payload);
 
     // RN0025: só bandeiras registradas no sistema.
-    const bandeira = await prisma.bandeiraCartao.findUnique({
-      where: { id: payload.bandeiraId },
-    });
-
-    if (!bandeira) {
+    if (!(await cartoesModel.bandeiraExiste(dados.bandeiraId))) {
       throw ApiError.requisicaoInvalida('Bandeira de cartão não registrada.');
     }
 
-    const primeiro = (await prisma.cartao.count({ where: { clienteId } })) === 0;
+    const primeiro = (await cartoesModel.contarDoCliente(clienteId)) === 0;
 
-    const linha = await prisma.$transaction(async tx => {
+    return executarEmTransacao(async tx => {
       // Um preferencial por cliente: o novo destrona o anterior.
       if (payload.preferencial) {
-        await tx.cartao.updateMany({
-          where: { clienteId },
-          data: { preferencial: false },
-        });
+        await cartoesModel.desmarcarPreferencial(clienteId, tx);
       }
 
-      return tx.cartao.create({
-        data: {
-          clienteId,
-          numero,
-          nomeImpresso: payload.nomeImpresso.trim(),
-          bandeiraId: payload.bandeiraId,
-          codigoSeguranca: apenasDigitos(payload.codigoSeguranca),
-          preferencial: payload.preferencial || primeiro,
-        },
-      });
-    });
+      const cartao = await cartoesModel.criar(
+        clienteId,
+        { ...dados, preferencial: payload.preferencial || primeiro },
+        tx,
+      );
 
-    return paraCartao(linha);
+      await logModel.registrar(
+        {
+          usuarioId,
+          operacao: 'INSERCAO',
+          entidade: ENTIDADE,
+          entidadeId: cartao.id,
+          depois: cartao,
+        },
+        tx,
+      );
+
+      return cartao;
+    });
   },
 
   /** RF0027: o cliente corrige os dados de um cartão já cadastrado. */
   async alterar(
     clienteId: number,
+    usuarioId: number,
     id: number,
     payload: CriarCartaoPayload,
   ): Promise<Cartao> {
-    const existente = await prisma.cartao.findFirst({ where: { id, clienteId } });
+    const antes = await exigirCartao(clienteId, id);
+    const dados = normalizar(payload);
 
-    if (!existente) throw ApiError.naoEncontrado('Cartão não encontrado.');
+    if (!(await cartoesModel.bandeiraExiste(dados.bandeiraId))) {
+      throw ApiError.requisicaoInvalida('Bandeira de cartão não registrada.');
+    }
 
-    const linha = await prisma.cartao.update({
-      where: { id },
-      data: {
-        numero: apenasDigitos(payload.numero),
-        nomeImpresso: payload.nomeImpresso.trim(),
-        bandeiraId: payload.bandeiraId,
-        codigoSeguranca: apenasDigitos(payload.codigoSeguranca),
-      },
+    return executarEmTransacao(async tx => {
+      const depois = await cartoesModel.atualizar(id, dados, tx);
+
+      await logModel.registrar(
+        {
+          usuarioId,
+          operacao: 'ALTERACAO',
+          entidade: ENTIDADE,
+          entidadeId: id,
+          antes,
+          depois,
+        },
+        tx,
+      );
+
+      return depois;
     });
-
-    return paraCartao(linha);
   },
 
   /**
@@ -121,33 +134,42 @@ export const cartoesService = {
    * histórico precisa continuar legível.
    */
   async remover(clienteId: number, id: number): Promise<void> {
-    const existente = await prisma.cartao.findFirst({ where: { id, clienteId } });
+    await exigirCartao(clienteId, id);
 
-    if (!existente) throw ApiError.naoEncontrado('Cartão não encontrado.');
-
-    const usado = await prisma.pagamento.count({ where: { cartaoId: id } });
-
-    if (usado > 0) {
+    if (await cartoesModel.usadoEmPagamento(id)) {
       throw ApiError.requisicaoInvalida(
         'Este cartão foi usado em uma compra e não pode ser excluído.',
       );
     }
 
-    await prisma.cartao.delete({ where: { id } });
+    await executarEmTransacao(tx => cartoesModel.remover(id, tx));
   },
 
   /** Um preferencial por cliente: o novo destrona o anterior. */
-  async definirPreferencial(clienteId: number, id: number): Promise<Cartao> {
-    const existente = await prisma.cartao.findFirst({ where: { id, clienteId } });
+  async definirPreferencial(
+    clienteId: number,
+    usuarioId: number,
+    id: number,
+  ): Promise<Cartao> {
+    const antes = await exigirCartao(clienteId, id);
 
-    if (!existente) throw ApiError.naoEncontrado('Cartão não encontrado.');
+    return executarEmTransacao(async tx => {
+      await cartoesModel.desmarcarPreferencial(clienteId, tx);
+      const depois = await cartoesModel.marcarPreferencial(id, tx);
 
-    const linha = await prisma.$transaction(async tx => {
-      await tx.cartao.updateMany({ where: { clienteId }, data: { preferencial: false } });
+      await logModel.registrar(
+        {
+          usuarioId,
+          operacao: 'ALTERACAO',
+          entidade: ENTIDADE,
+          entidadeId: id,
+          antes,
+          depois,
+        },
+        tx,
+      );
 
-      return tx.cartao.update({ where: { id }, data: { preferencial: true } });
+      return depois;
     });
-
-    return paraCartao(linha);
   },
 };
