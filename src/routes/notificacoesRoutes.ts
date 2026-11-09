@@ -20,9 +20,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
 
-import { prisma } from '../config/prisma';
 import { autenticacao } from '../middlewares/autenticacao';
 import { validar } from '../middlewares/validar';
+import { notificacoesModel } from '../models/notificacoesModel';
 import { ApiError } from '../utils/ApiError';
 
 const idSchema = z.object({
@@ -45,21 +45,7 @@ notificacoesRoutes.get('/', async (req, res, next) => {
   try {
     const clienteId = clienteDaSessao(req.usuario?.clienteId);
 
-    const linhas = await prisma.notificacao.findMany({
-      where: { clienteId },
-      orderBy: { criadoEm: 'desc' },
-      take: 50,
-    });
-
-    res.json(
-      linhas.map(n => ({
-        id: n.id,
-        mensagem: n.mensagem,
-        lida: n.lida,
-        criadoEm: n.criadoEm.toISOString(),
-        pedidoId: n.pedidoId ?? undefined,
-      })),
-    );
+    res.json(await notificacoesModel.listarDoCliente(clienteId));
   } catch (erro) {
     next(erro);
   }
@@ -72,13 +58,12 @@ notificacoesRoutes.patch(
     try {
       const clienteId = clienteDaSessao(req.usuario?.clienteId);
 
-      // O updateMany com o clienteId no filtro impede marcar aviso alheio.
-      const { count } = await prisma.notificacao.updateMany({
-        where: { id: Number(req.params.id), clienteId },
-        data: { lida: true },
-      });
+      const marcou = await notificacoesModel.marcarLida(
+        clienteId,
+        Number(req.params.id),
+      );
 
-      if (count === 0) {
+      if (!marcou) {
         throw ApiError.naoEncontrado('Notificação não encontrada.');
       }
 

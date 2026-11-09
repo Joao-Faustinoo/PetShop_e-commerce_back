@@ -5,20 +5,22 @@
  * administrador autoriza e depois confirma o recebimento, quando o cupom
  * é emitido e o item pode voltar ao estoque.
  *
- * COMO FARÁ: orquestra o Prisma e aplica as regras do DRS, lançando
- * ApiError quando uma delas é violada. Não conhece `req` nem `res`. Cada
- * passo muda o status da troca e o do pedido junto, porque o DRS trata os
- * dois como o mesmo ciclo.
+ * COMO FARÁ: aplica as regras do DRS sobre os models, lançando ApiError
+ * quando uma delas é violada. Não conhece o Prisma, nem `req`, nem `res`.
+ * Cada passo muda o status da troca e o do pedido junto, dentro da mesma
+ * transação, porque o DRS trata os dois como o mesmo ciclo.
  *
  * ATENDE: RF0041, RF0042, RF0043, RF0044, RF0054, RN0041, RN0042, RN0043,
  * RNF0012, RNF0046
  */
 
-import { Prisma, SituacaoPedido, StatusTroca } from '@prisma/client';
+import { SituacaoPedido, StatusTroca } from '@prisma/client';
 
-import { prisma } from '../config/prisma';
 import { estoqueModel } from '../models/estoqueModel';
 import { logModel } from '../models/logModel';
+import { notificacoesModel } from '../models/notificacoesModel';
+import { pedidosModel } from '../models/pedidosModel';
+import { trocasModel } from '../models/trocasModel';
 import {
   ItemTroca,
   PedidoTroca,
@@ -26,65 +28,23 @@ import {
   TrocaFiltros,
 } from '../types/trocas/types';
 import { ApiError } from '../utils/ApiError';
+import { executarEmTransacao } from '../utils/transacao';
 import { cuponsService } from './cuponsService';
 
 const duasCasas = (valor: number): number => Number(valor.toFixed(2));
 
-const comTudo = {
-  itens: { orderBy: { id: 'asc' } },
-  pedido: { select: { numero: true } },
-  cliente: { select: { nome: true } },
-  cupomGerado: { select: { id: true, codigo: true } },
-} as const satisfies Prisma.TrocaInclude;
-
-type Linha = Prisma.TrocaGetPayload<{ include: typeof comTudo }>;
-
-const paraItem = (linha: Linha['itens'][number]): ItemTroca => ({
-  produtoId: linha.produtoId,
-  produtoNome: linha.produtoNome,
-  quantidade: linha.quantidade,
-  valorUnitario: linha.valorUnitario.toNumber(),
-  subtotal: linha.subtotal.toNumber(),
-});
-
-const paraTroca = (linha: Linha): PedidoTroca => ({
-  id: linha.id,
-  pedidoId: linha.pedidoId,
-  pedidoNumero: linha.pedido.numero,
-  clienteId: linha.clienteId,
-  clienteNome: linha.cliente.nome,
-  itens: linha.itens.map(paraItem),
-  motivo: linha.motivo,
-  status: linha.status,
-  dataSolicitacao: linha.dataSolicitacao.toISOString(),
-  valorTotal: linha.valorTotal.toNumber(),
-  cupomGeradoId: linha.cupomGerado?.id,
-  cupomGeradoCodigo: linha.cupomGerado?.codigo,
-  retornouAoEstoque: linha.retornouAoEstoque ?? undefined,
-  trocaTotal: linha.trocaTotal,
-});
-
 export const trocasService = {
   /** RF0043: o administrador vê os pedidos de troca; o cliente, os seus. */
   async listar(filtros: TrocaFiltros): Promise<PedidoTroca[]> {
-    const linhas = await prisma.troca.findMany({
-      where: {
-        ...(filtros.status && { status: filtros.status as StatusTroca }),
-        ...(filtros.clienteId && { clienteId: filtros.clienteId }),
-      },
-      include: comTudo,
-      orderBy: { dataSolicitacao: 'desc' },
-    });
-
-    return linhas.map(paraTroca);
+    return trocasModel.listar(filtros);
   },
 
   async buscarPorId(id: number): Promise<PedidoTroca> {
-    const linha = await prisma.troca.findUnique({ where: { id }, include: comTudo });
+    const troca = await trocasModel.buscarPorId(id);
 
-    if (!linha) throw ApiError.naoEncontrado('Pedido de troca não encontrado.');
+    if (!troca) throw ApiError.naoEncontrado('Pedido de troca não encontrado.');
 
-    return paraTroca(linha);
+    return troca;
   },
 
   /**
@@ -96,19 +56,16 @@ export const trocasService = {
     usuarioId: number,
     payload: SolicitarTrocaPayload,
   ): Promise<PedidoTroca> {
-    const trocaId = await prisma.$transaction(async tx => {
-      const pedido = await tx.pedido.findUnique({
-        where: { id: payload.pedidoId },
-        include: { itens: true, trocas: { include: { itens: true } } },
-      });
+    const trocaId = await executarEmTransacao(async tx => {
+      const compra = await trocasModel.compraParaTroca(payload.pedidoId, tx);
 
-      if (!pedido) throw ApiError.naoEncontrado('Pedido não encontrado.');
-      if (pedido.clienteId !== clienteId) {
+      if (!compra) throw ApiError.naoEncontrado('Pedido não encontrado.');
+      if (compra.clienteId !== clienteId) {
         throw ApiError.naoAutorizado('Esta compra é de outro cliente.');
       }
 
       // RN0043: o DRS é explícito — só o que foi entregue pode ser trocado.
-      if (pedido.situacao !== SituacaoPedido.ENTREGUE) {
+      if (compra.situacao !== SituacaoPedido.ENTREGUE) {
         throw ApiError.requisicaoInvalida(
           'Só é possível solicitar troca de uma compra ENTREGUE.',
         );
@@ -120,37 +77,34 @@ export const trocasService = {
 
       // Quanto de cada produto já foi pedido em trocas anteriores.
       const jaPedido = new Map<number, number>();
-      pedido.trocas.forEach(t =>
-        t.itens.forEach(i =>
-          jaPedido.set(i.produtoId, (jaPedido.get(i.produtoId) ?? 0) + i.quantidade),
-        ),
+      compra.jaPedidos.forEach(({ produtoId, quantidade }) =>
+        jaPedido.set(produtoId, (jaPedido.get(produtoId) ?? 0) + quantidade),
       );
 
-      const itens = payload.itens.map(escolhido => {
-        const doPedido = pedido.itens.find(i => i.produtoId === escolhido.produtoId);
+      const itens: ItemTroca[] = payload.itens.map(escolhido => {
+        const comprado = compra.itens.find(i => i.produtoId === escolhido.produtoId);
 
-        if (!doPedido) {
+        if (!comprado) {
           throw ApiError.requisicaoInvalida(
             'Um dos itens escolhidos não faz parte desta compra.',
           );
         }
 
-        const disponivel = doPedido.quantidade - (jaPedido.get(escolhido.produtoId) ?? 0);
+        const disponivel =
+          comprado.quantidade - (jaPedido.get(escolhido.produtoId) ?? 0);
 
         if (escolhido.quantidade > disponivel) {
           throw ApiError.requisicaoInvalida(
-            `${doPedido.produtoNome}: há ${disponivel} unidade(s) disponível(is) para troca.`,
+            `${comprado.produtoNome}: há ${disponivel} unidade(s) disponível(is) para troca.`,
           );
         }
 
-        const valorUnitario = doPedido.valorUnitario.toNumber();
-
         return {
-          produtoId: doPedido.produtoId,
-          produtoNome: doPedido.produtoNome,
+          produtoId: comprado.produtoId,
+          produtoNome: comprado.produtoNome,
           quantidade: escolhido.quantidade,
-          valorUnitario,
-          subtotal: duasCasas(valorUnitario * escolhido.quantidade),
+          valorUnitario: comprado.valorUnitario,
+          subtotal: duasCasas(comprado.valorUnitario * escolhido.quantidade),
         };
       });
 
@@ -158,51 +112,41 @@ export const trocasService = {
 
       // RN0041: a solicitação cobre a compra inteira quando todos os itens,
       // em toda a quantidade, estão sendo devolvidos.
-      const trocaTotal = pedido.itens.every(doPedido => {
-        const pedidoAgora = itens.find(i => i.produtoId === doPedido.produtoId);
-        const anterior = jaPedido.get(doPedido.produtoId) ?? 0;
+      const trocaTotal = compra.itens.every(comprado => {
+        const agora = itens.find(i => i.produtoId === comprado.produtoId);
+        const anterior = jaPedido.get(comprado.produtoId) ?? 0;
 
-        return (pedidoAgora?.quantidade ?? 0) + anterior === doPedido.quantidade;
+        return (agora?.quantidade ?? 0) + anterior === comprado.quantidade;
       });
 
-      const criada = await tx.troca.create({
-        data: {
-          numero: `TMP-${Date.now().toString(36)}`,
-          pedidoId: pedido.id,
+      const criadaId = await trocasModel.criar(
+        {
+          pedidoId: compra.id,
           clienteId,
           motivo: payload.motivo.trim(),
-          status: StatusTroca.EM_TROCA,
           trocaTotal,
           valorTotal,
-          itens: { create: itens },
+          itens,
         },
-        select: { id: true },
-      });
-
-      await tx.troca.update({
-        where: { id: criada.id },
-        data: { numero: `TRC-${String(criada.id).padStart(4, '0')}` },
-      });
+        tx,
+      );
 
       // RN0041: a compra passa a EM TROCA.
-      await tx.pedido.update({
-        where: { id: pedido.id },
-        data: { situacao: SituacaoPedido.EM_TROCA },
-      });
+      await pedidosModel.alterarSituacao(compra.id, SituacaoPedido.EM_TROCA, tx);
 
       await logModel.registrar(
         {
           usuarioId,
           operacao: 'ALTERACAO',
           entidade: 'Pedido',
-          entidadeId: pedido.id,
+          entidadeId: compra.id,
           antes: { status: 'ENTREGUE' },
-          depois: { status: 'EM_TROCA', trocaId: criada.id, trocaTotal },
+          depois: { status: 'EM_TROCA', trocaId: criadaId, trocaTotal },
         },
         tx,
       );
 
-      return criada.id;
+      return criadaId;
     });
 
     return this.buscarPorId(trocaId);
@@ -213,11 +157,8 @@ export const trocasService = {
    * autorização é algo que ele RECEBE, não só um status que muda.
    */
   async autorizar(id: number, usuarioId: number): Promise<PedidoTroca> {
-    await prisma.$transaction(async tx => {
-      const troca = await tx.troca.findUnique({
-        where: { id },
-        include: { pedido: { select: { numero: true } } },
-      });
+    await executarEmTransacao(async tx => {
+      const troca = await trocasModel.buscarEmCurso(id, tx);
 
       if (!troca) throw ApiError.naoEncontrado('Pedido de troca não encontrado.');
       if (troca.status !== StatusTroca.EM_TROCA) {
@@ -226,23 +167,21 @@ export const trocasService = {
         );
       }
 
-      await tx.troca.update({
-        where: { id },
-        data: { status: StatusTroca.TROCA_AUTORIZADA },
-      });
+      await trocasModel.atualizarStatus(id, StatusTroca.TROCA_AUTORIZADA, tx);
+      await pedidosModel.alterarSituacao(
+        troca.pedidoId,
+        SituacaoPedido.TROCA_AUTORIZADA,
+        tx,
+      );
 
-      await tx.pedido.update({
-        where: { id: troca.pedidoId },
-        data: { situacao: SituacaoPedido.TROCA_AUTORIZADA },
-      });
-
-      await tx.notificacao.create({
-        data: {
+      await notificacoesModel.criar(
+        {
           clienteId: troca.clienteId,
           pedidoId: troca.pedidoId,
-          mensagem: `Sua troca do pedido ${troca.pedido.numero} foi autorizada. Envie os itens para concluir.`,
+          mensagem: `Sua troca do pedido ${troca.pedidoNumero} foi autorizada. Envie os itens para concluir.`,
         },
-      });
+        tx,
+      );
 
       await logModel.registrar(
         {
@@ -270,11 +209,8 @@ export const trocasService = {
     usuarioId: number,
     retornarAoEstoque: boolean,
   ): Promise<PedidoTroca> {
-    await prisma.$transaction(async tx => {
-      const troca = await tx.troca.findUnique({
-        where: { id },
-        include: { itens: true },
-      });
+    await executarEmTransacao(async tx => {
+      const troca = await trocasModel.buscarEmCurso(id, tx);
 
       if (!troca) throw ApiError.naoEncontrado('Pedido de troca não encontrado.');
       if (troca.status !== StatusTroca.TROCA_AUTORIZADA) {
@@ -284,11 +220,7 @@ export const trocasService = {
       }
 
       // RF0044: o valor devolvido vira crédito para compras futuras.
-      const cupom = await cuponsService.emitir(
-        troca.clienteId,
-        troca.valorTotal.toNumber(),
-        tx,
-      );
+      const cupom = await cuponsService.emitir(troca.clienteId, troca.valorTotal, tx);
 
       // RF0054: reentrada dos itens trocados, se o administrador aprovar.
       if (retornarAoEstoque) {
@@ -297,28 +229,22 @@ export const trocasService = {
         }
       }
 
-      await tx.troca.update({
-        where: { id },
-        data: {
-          status: StatusTroca.TROCADO,
-          retornouAoEstoque: retornarAoEstoque,
-          cupomGeradoId: cupom.id,
-        },
+      await trocasModel.atualizarStatus(id, StatusTroca.TROCADO, tx, {
+        retornouAoEstoque: retornarAoEstoque,
+        cupomGeradoId: cupom.id,
       });
 
       // RN0042: a compra passa a TROCADO.
-      await tx.pedido.update({
-        where: { id: troca.pedidoId },
-        data: { situacao: SituacaoPedido.TROCADO },
-      });
+      await pedidosModel.alterarSituacao(troca.pedidoId, SituacaoPedido.TROCADO, tx);
 
-      await tx.notificacao.create({
-        data: {
+      await notificacoesModel.criar(
+        {
           clienteId: troca.clienteId,
           pedidoId: troca.pedidoId,
           mensagem: `Recebemos os itens da sua troca. O cupom ${cupom.codigo}, de R$ ${cupom.valor}, já está disponível.`,
         },
-      });
+        tx,
+      );
 
       await logModel.registrar(
         {
