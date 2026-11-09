@@ -47,4 +47,53 @@ export const produtosController = {
       next(erro);
     }
   },
+
+  /** RF0011 */
+  async criar(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res
+        .status(201)
+        .json(await produtosService.criar(req.usuario?.id ?? 0, req.body));
+    } catch (erro) {
+      next(erro);
+    }
+  },
+
+  /** RF0014 */
+  async alterar(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      res.json(
+        await produtosService.alterar(
+          req.usuario?.id ?? 0,
+          Number(req.params.id),
+          req.body,
+        ),
+      );
+    } catch (erro) {
+      next(erro);
+    }
+  },
+
+  /** RF0012 e RF0016 */
+  async alterarSituacao(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const { ativo, motivoId, justificativa } = req.body;
+
+      res.json(
+        await produtosService.alterarSituacao(
+          req.usuario?.id ?? 0,
+          Number(req.params.id),
+          ativo,
+          motivoId,
+          justificativa,
+        ),
+      );
+    } catch (erro) {
+      next(erro);
+    }
+  },
 };
