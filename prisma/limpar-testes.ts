@@ -7,10 +7,10 @@
  *
  * COMO FARÁ: apaga os clientes cujo e-mail segue o padrão dos testes
  * (`ct01.`, `ct02.`, `teste.`, `novo.`) — telefone, endereços, cartões e
- * pets saem junto, pelo `onDelete: Cascade` do schema. Depois remove o
- * endereço e o cartão que o CT-03 cria no checkout, junto dos pedidos que
- * os referenciam, e devolve os cupons do seed ao estado em que nasceram,
- * descartando os cupons de troca emitidos durante os testes.
+ * pets saem junto, pelo `onDelete: Cascade` do schema. Depois remove os
+ * endereços e os cartões que os specs criam no checkout, junto dos pedidos
+ * que os referenciam, e devolve os cupons do seed ao estado em que
+ * nasceram, descartando os cupons de troca emitidos durante os testes.
  *
  * POR QUE existe: a API não tem DELETE de cliente, e não deve ter — a
  * RF0023 manda inativar, nunca excluir. E o cupom é consumido na compra
@@ -30,9 +30,14 @@ const prisma = new PrismaClient();
 /** Os prefixos que os specs usam ao montar e-mails únicos. */
 const PREFIXOS_DE_TESTE = ['ct01.', 'ct02.', 'ct02b.', 'teste.', 'novo.'];
 
-/** As marcas que o CT-03 deixa no endereço e no cartão que cria. */
-const APELIDO_ENDERECO_CT03 = 'Entrega CT03';
-const NOME_CARTAO_CT03 = 'CLIENTE CT03';
+/**
+ * As marcas que os specs deixam no endereço e no cartão que criam no
+ * checkout: `Entrega CT03` e `CLIENTE CT03` vêm do CT-03 de pedidos.cy.ts,
+ * `CLIENTE ANALISE` vem das compras que analise.cy.ts faz para provar o
+ * efeito de uma venda nova sobre o gráfico.
+ */
+const APELIDOS_DE_ENDERECO = ['Entrega CT03'];
+const NOMES_DE_CARTAO = ['CLIENTE CT03', 'CLIENTE ANALISE'];
 
 const limparClientes = async (): Promise<void> => {
   const alvos = await prisma.cliente.findMany({
@@ -59,23 +64,23 @@ const limparClientes = async (): Promise<void> => {
 };
 
 /**
- * O endereço e o cartão criados no checkout pelo CT-03, mais as compras
- * que os usaram — a compra precisa sair antes, porque Pedido aponta para o
- * endereço e Pagamento aponta para o cartão, e nenhuma das duas relações é
- * em cascata.
+ * Os endereços e os cartões que os specs criam no checkout, mais as
+ * compras que os usaram — a compra precisa sair antes, porque Pedido
+ * aponta para o endereço e Pagamento aponta para o cartão, e nenhuma das
+ * duas relações é em cascata.
  */
-const limparCompraDoCT03 = async (): Promise<void> => {
+const limparCompraDosTestes = async (): Promise<void> => {
   const enderecos = await prisma.endereco.findMany({
-    where: { apelido: APELIDO_ENDERECO_CT03 },
+    where: { apelido: { in: APELIDOS_DE_ENDERECO } },
     select: { id: true },
   });
   const cartoes = await prisma.cartao.findMany({
-    where: { nomeImpresso: NOME_CARTAO_CT03 },
+    where: { nomeImpresso: { in: NOMES_DE_CARTAO } },
     select: { id: true },
   });
 
   if (enderecos.length === 0 && cartoes.length === 0) {
-    console.log('CT-03: nada a limpar.');
+    console.log('Checkout: nada a limpar.');
 
     return;
   }
@@ -95,7 +100,10 @@ const limparCompraDoCT03 = async (): Promise<void> => {
 
   if (pedidos.length > 0) {
     await prisma.pedido.deleteMany({ where: { id: { in: pedidos.map(p => p.id) } } });
-    console.log(`CT-03: ${pedidos.length} pedido(s) removido(s) — ${pedidos.map(p => p.numero).join(', ')}.`);
+    console.log(
+      `Checkout: ${pedidos.length} pedido(s) de teste removido(s) — ` +
+        `${pedidos.map(p => p.numero).join(', ')}.`,
+    );
   }
 
   const { count: cartoesRemovidos } = await prisma.cartao.deleteMany({
@@ -106,7 +114,7 @@ const limparCompraDoCT03 = async (): Promise<void> => {
   });
 
   console.log(
-    `CT-03: ${cartoesRemovidos} cartão(ões) e ${enderecosRemovidos} endereço(s) removido(s).`,
+    `Checkout: ${cartoesRemovidos} cartão(ões) e ${enderecosRemovidos} endereço(s) removido(s).`,
   );
 };
 
@@ -164,7 +172,7 @@ const reporCupons = async (): Promise<void> => {
 
 const main = async (): Promise<void> => {
   await limparClientes();
-  await limparCompraDoCT03();
+  await limparCompraDosTestes();
   await reporCupons();
 };
 

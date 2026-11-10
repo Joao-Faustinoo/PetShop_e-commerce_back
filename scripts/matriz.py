@@ -67,10 +67,15 @@ def mapear() -> dict[str, dict[str, list[str]]]:
 
         texto = io.open(os.path.join(TESTES, nome), encoding='utf-8', errors='replace').read()
 
+        # As quatro suites numeram a partir do CT-01, entao o numero sozinho
+        # nao identifica o caso: o nome do arquivo entra junto.
+        suite = nome.removesuffix('.cy.ts')
+
         for titulo in re.findall(r"it\('([^']+)'", texto):
             for codigo in set(re.findall(r'\b(?:RF|RNF|RN)\d{4}\b', titulo)):
                 mapa.setdefault(codigo, {'codigo': [], 'testes': []})
-                caso = titulo.split('·')[0].strip() if '·' in titulo else titulo[:28]
+                numero = titulo.split('·')[0].strip() if '·' in titulo else titulo[:28]
+                caso = suite + ' ' + numero
                 if caso not in mapa[codigo]['testes']:
                     mapa[codigo]['testes'].append(caso)
 

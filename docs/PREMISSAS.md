@@ -121,6 +121,18 @@ EM TROCA, TROCA AUTORIZADA e TROCADO, e não diz o que fazer com uma venda
 que depois virou troca. Seguimos o texto literal: ela sai da conta. A lacuna
 fica registrada aqui.
 
+O enunciado da atividade da análise gráfica pede um critério mais estreito —
+"somente compras com status ENTREGUE entram no cálculo". Mantivemos a RN0074,
+porque o DRS é a referência declarada do trabalho e ele conta os três status.
+A escolha tem uma consequência visível na demonstração: a compra entra no
+gráfico **quando é aprovada**, e seguir para EM TRANSPORTE e depois ENTREGUE
+mantém o valor em vez de acrescentá-lo. Por isso o cenário "compra que passa
+a ENTREGUE dentro do período" é demonstrado pelo que o sistema faz de fato —
+a compra que chegou a ENTREGUE está no gráfico da consulta seguinte, com o
+mesmo valor nas três situações contabilizáveis (`analise CT-06`) — e o
+cenário "compra com status diferente de ENTREGUE não contabilizada" usa uma
+compra REPROVADA, que de fato fica fora da conta (`analise CT-05`).
+
 **Produto em várias categorias no gráfico (RN0012 encontrando a RF0055).**
 Um produto pode estar em mais de uma categoria, e o DRS não diz como
 contabilizá-lo no gráfico por categoria. O valor do item é **rateado** entre
