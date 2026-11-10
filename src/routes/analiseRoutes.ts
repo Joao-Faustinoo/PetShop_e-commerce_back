@@ -1,18 +1,35 @@
 /**
- * [CONTROLLER] Rotas de análise gerencial
+ * [CONTROLLER] Rotas da análise gerencial
  *
- * O QUE FAZ: associa os caminhos de análise gerencial aos handlers do
+ * O QUE FAZ: associa o caminho da análise de vendas ao handler do
  * controller.
  *
- * COMO FARÁ: define o Router do Express, encadeando os middlewares de
- * autenticação, autorização por perfil e validação antes de cada handler.
+ * COMO FARÁ: define o Router do Express, encadeando autenticação,
+ * autorização por perfil e validação antes do handler. A análise é do
+ * administrador: a RF0055 diz isso com todas as letras.
  *
- * ATENDE: RF0055-RF0058, RN0071-RN0074, RNF0043-RNF0046
+ * ATENDE: RF0055, RF0056, RF0057, RN0071-RN0074
  */
 
 /*
  * Endpoints:
- *   GET    /analise/vendas
+ *   GET /analise/vendas   admin
  */
 
-// TODO: implementar o roteador.
+import { Router } from 'express';
+
+import { analiseController } from '../controllers/analiseController';
+import { autenticacao } from '../middlewares/autenticacao';
+import { autorizacao } from '../middlewares/autorizacao';
+import { validar } from '../middlewares/validar';
+import { analiseFiltroSchema } from '../validations/analiseFiltroSchema';
+
+export const analiseRoutes = Router();
+
+analiseRoutes.get(
+  '/vendas',
+  autenticacao,
+  autorizacao('ADMIN'),
+  validar({ query: analiseFiltroSchema }),
+  analiseController.vendas,
+);

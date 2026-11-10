@@ -15,6 +15,7 @@
 
 import { Router } from 'express';
 
+import { analiseRoutes } from './analiseRoutes';
 import { authRoutes } from './authRoutes';
 import { clientesRoutes } from './clientesRoutes';
 import { carrinhoRoutes } from './carrinhoRoutes';
@@ -50,3 +51,4 @@ rotas.use('/dominios', dominiosRoutes);
 rotas.use('/logs', logRoutes);
 rotas.use('/pets', petsRoutes);
 rotas.use('/estoque', estoqueRoutes);
+rotas.use('/analise', analiseRoutes);
