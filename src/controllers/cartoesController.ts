@@ -38,7 +38,14 @@ const usuarioDaSessao = (req: Request): number =>
 export const cartoesController = {
   async listar(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      res.json(await cartoesService.listar(clienteDaSessao(req)));
+      const { incluirNaoSalvos } = req.query as { incluirNaoSalvos?: string };
+
+      res.json(
+        await cartoesService.listar(
+          clienteDaSessao(req),
+          incluirNaoSalvos === 'true',
+        ),
+      );
     } catch (erro) {
       next(erro);
     }
@@ -54,6 +61,7 @@ export const cartoesController = {
             clienteDaSessao(req),
             usuarioDaSessao(req),
             req.body,
+            req.body.salvarNoPerfil !== false,
           ),
         );
     } catch (erro) {

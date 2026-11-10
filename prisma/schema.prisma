@@ -180,6 +180,10 @@ model Endereco {
   estado           String       @db.VarChar(2)
   pais             String
   observacoes      String?
+  /// RF0035: o endereço criado no checkout só entra no perfil se o cliente
+  /// pedir. Sem isto, a caixa "salvar no meu perfil" não teria efeito — o
+  /// pedido aponta para o endereço, então ele precisa existir de todo jeito.
+  salvoNoPerfil    Boolean      @default(true) @map("salvo_no_perfil")
 
   cliente        Cliente        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
   tipoResidencia TipoResidencia @relation(fields: [tipoResidenciaId], references: [id])
@@ -201,6 +205,9 @@ model Cartao {
   codigoSeguranca String  @map("codigo_seguranca") @db.VarChar(4)
   /// RF0027: exatamente um cartão do cliente é o preferencial.
   preferencial    Boolean @default(false)
+  /// RF0036: mesmo caso do endereço — o pagamento aponta para o cartão, mas
+  /// isso não obriga o cartão a ficar guardado no perfil do cliente.
+  salvoNoPerfil   Boolean @default(true) @map("salvo_no_perfil")
 
   cliente  Cliente        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
   bandeira BandeiraCartao @relation(fields: [bandeiraId], references: [id])

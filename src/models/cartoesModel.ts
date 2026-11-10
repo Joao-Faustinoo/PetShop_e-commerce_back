@@ -25,6 +25,7 @@ type LinhaCartao = Prisma.CartaoGetPayload<Record<string, never>>;
 
 /** Dados já normalizados pelo service, prontos para gravar. */
 export interface DadosCartao {
+  salvoNoPerfil: boolean;
   numero: string;
   nomeImpresso: string;
   bandeiraId: number;
@@ -49,9 +50,17 @@ const paraCartao = (linha: LinhaCartao): Cartao => ({
 });
 
 export const cartoesModel = {
-  async listarDoCliente(clienteId: number, tx: Executor = prisma): Promise<Cartao[]> {
+  /** RF0036: mesma regra do endereço — o não salvo some do perfil. */
+  async listarDoCliente(
+    clienteId: number,
+    incluirNaoSalvos = false,
+    tx: Executor = prisma,
+  ): Promise<Cartao[]> {
     const linhas = await tx.cartao.findMany({
-      where: { clienteId },
+      where: {
+        clienteId,
+        ...(incluirNaoSalvos ? {} : { salvoNoPerfil: true }),
+      },
       orderBy: [{ preferencial: 'desc' }, { id: 'asc' }],
     });
 

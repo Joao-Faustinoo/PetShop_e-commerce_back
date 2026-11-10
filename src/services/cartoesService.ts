@@ -22,7 +22,7 @@ const ENTIDADE = 'Cartao';
 const apenasDigitos = (valor: string): string => valor.replace(/\D/g, '');
 
 /** RN0024: o número precisa ter o comprimento de um cartão de verdade. */
-const normalizar = (payload: CriarCartaoPayload) => {
+const normalizar = (payload: CriarCartaoPayload, salvoNoPerfil: boolean) => {
   const numero = apenasDigitos(payload.numero);
 
   if (numero.length < 13 || numero.length > 19) {
@@ -30,6 +30,7 @@ const normalizar = (payload: CriarCartaoPayload) => {
   }
 
   return {
+    salvoNoPerfil,
     numero,
     nomeImpresso: payload.nomeImpresso.trim(),
     bandeiraId: payload.bandeiraId,
@@ -47,8 +48,8 @@ const exigirCartao = async (clienteId: number, id: number): Promise<Cartao> => {
 };
 
 export const cartoesService = {
-  async listar(clienteId: number): Promise<Cartao[]> {
-    return cartoesModel.listarDoCliente(clienteId);
+  async listar(clienteId: number, incluirNaoSalvos = false): Promise<Cartao[]> {
+    return cartoesModel.listarDoCliente(clienteId, incluirNaoSalvos);
   },
 
   /**
@@ -59,8 +60,9 @@ export const cartoesService = {
     clienteId: number,
     usuarioId: number,
     payload: CriarCartaoPayload,
+    salvoNoPerfil = true,
   ): Promise<Cartao> {
-    const dados = normalizar(payload);
+    const dados = normalizar(payload, salvoNoPerfil);
 
     // RN0025: só bandeiras registradas no sistema.
     if (!(await cartoesModel.bandeiraExiste(dados.bandeiraId))) {
@@ -104,7 +106,8 @@ export const cartoesService = {
     payload: CriarCartaoPayload,
   ): Promise<Cartao> {
     const antes = await exigirCartao(clienteId, id);
-    const dados = normalizar(payload);
+    // Alterar não muda se está no perfil: quem decide isso é o cadastro.
+    const dados = normalizar(payload, true);
 
     if (!(await cartoesModel.bandeiraExiste(dados.bandeiraId))) {
       throw ApiError.requisicaoInvalida('Bandeira de cartão não registrada.');

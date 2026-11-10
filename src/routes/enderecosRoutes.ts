@@ -44,10 +44,17 @@ const criarEnderecoSchema = z.object({
   pais: z.string().trim().min(1, 'Informe o país.'),
   observacoes: z.string().trim().optional(),
   clienteId: z.number().int().positive().optional(),
+  /**
+   * RF0035 e RF0036: o cliente escolhe se o que cadastrou durante a compra
+   * fica guardado no perfil. Precisa estar declarado aqui: o Zod descarta
+   * chave que o schema não conhece, e o flag nunca chegaria ao service.
+   */
+  salvarNoPerfil: z.boolean().optional(),
 });
 
 const filtroSchema = z.object({
   tipo: z.enum(['ENTREGA', 'COBRANCA']).optional(),
+  incluirNaoSalvos: z.enum(['true', 'false']).optional(),
 });
 
 export const enderecosRoutes = Router();

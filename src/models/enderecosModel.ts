@@ -23,6 +23,7 @@ type LinhaEndereco = Prisma.EnderecoGetPayload<Record<string, never>>;
 
 /** Dados já normalizados pelo service, prontos para gravar. */
 export interface DadosEndereco {
+  salvoNoPerfil: boolean;
   apelido: string;
   tipo: TipoEndereco;
   tipoResidenciaId: number;
@@ -55,13 +56,23 @@ const paraEndereco = (linha: LinhaEndereco): Endereco => ({
 });
 
 export const enderecosModel = {
+  /**
+   * RF0035: por padrão só os endereços do perfil. O checkout pede também
+   * os não salvos, porque um endereço criado para aquela compra precisa
+   * continuar selecionável enquanto ela não fecha.
+   */
   async listarDoCliente(
     clienteId: number,
     tipo?: TipoEndereco,
+    incluirNaoSalvos = false,
     tx: Executor = prisma,
   ): Promise<Endereco[]> {
     const linhas = await tx.endereco.findMany({
-      where: { clienteId, ...(tipo && { tipo }) },
+      where: {
+        clienteId,
+        ...(tipo && { tipo }),
+        ...(incluirNaoSalvos ? {} : { salvoNoPerfil: true }),
+      },
       orderBy: { id: 'asc' },
     });
 

@@ -33,6 +33,12 @@ const criarCartaoSchema = z.object({
     .regex(/^\d{3,4}$/, 'O código de segurança tem 3 ou 4 dígitos.'),
   preferencial: z.boolean().optional().default(false),
   clienteId: z.number().int().positive().optional(),
+  /**
+   * RF0035 e RF0036: o cliente escolhe se o que cadastrou durante a compra
+   * fica guardado no perfil. Precisa estar declarado aqui: o Zod descarta
+   * chave que o schema não conhece, e o flag nunca chegaria ao service.
+   */
+  salvarNoPerfil: z.boolean().optional(),
 });
 
 export const cartoesRoutes = Router();

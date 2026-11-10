@@ -38,9 +38,18 @@ const usuarioDaSessao = (req: Request): number =>
 export const enderecosController = {
   async listar(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const { tipo } = req.query as { tipo?: TipoEndereco };
+      const { tipo, incluirNaoSalvos } = req.query as {
+        tipo?: TipoEndereco;
+        incluirNaoSalvos?: string;
+      };
 
-      res.json(await enderecosService.listar(clienteDaSessao(req), tipo));
+      res.json(
+        await enderecosService.listar(
+          clienteDaSessao(req),
+          tipo,
+          incluirNaoSalvos === 'true',
+        ),
+      );
     } catch (erro) {
       next(erro);
     }
@@ -55,6 +64,7 @@ export const enderecosController = {
             clienteDaSessao(req),
             usuarioDaSessao(req),
             req.body,
+            req.body.salvarNoPerfil !== false,
           ),
         );
     } catch (erro) {

@@ -26,7 +26,11 @@ import { executarEmTransacao } from '../utils/transacao';
 const ENTIDADE = 'Endereco';
 
 /** RN0023: o cadastro guarda os campos já aparados e padronizados. */
-const normalizar = (payload: CriarEnderecoPayload): DadosEndereco => ({
+const normalizar = (
+  payload: CriarEnderecoPayload,
+  salvoNoPerfil: boolean,
+): DadosEndereco => ({
+  salvoNoPerfil,
   apelido: payload.apelido.trim(),
   tipo: payload.tipo,
   tipoResidenciaId: payload.tipoResidenciaId,
@@ -67,8 +71,12 @@ const exigirEndereco = async (clienteId: number, id: number): Promise<Endereco> 
 
 export const enderecosService = {
   /** RF0035: os endereços que o cliente pode escolher na entrega. */
-  async listar(clienteId: number, tipo?: TipoEndereco): Promise<Endereco[]> {
-    return enderecosModel.listarDoCliente(clienteId, tipo);
+  async listar(
+    clienteId: number,
+    tipo?: TipoEndereco,
+    incluirNaoSalvos = false,
+  ): Promise<Endereco[]> {
+    return enderecosModel.listarDoCliente(clienteId, tipo, incluirNaoSalvos);
   },
 
   /**
@@ -79,8 +87,9 @@ export const enderecosService = {
     clienteId: number,
     usuarioId: number,
     payload: CriarEnderecoPayload,
+    salvoNoPerfil = true,
   ): Promise<Endereco> {
-    const dados = normalizar(payload);
+    const dados = normalizar(payload, salvoNoPerfil);
     await exigirDominios(dados);
 
     return executarEmTransacao(async tx => {
@@ -109,7 +118,8 @@ export const enderecosService = {
     payload: CriarEnderecoPayload,
   ): Promise<Endereco> {
     const antes = await exigirEndereco(clienteId, id);
-    const dados = normalizar(payload);
+    // Alterar não muda se está no perfil: quem decide isso é o cadastro.
+    const dados = normalizar(payload, true);
     await exigirDominios(dados);
 
     return executarEmTransacao(async tx => {
