@@ -28,6 +28,17 @@ import { Paginacao } from '../types/common/types';
 import { recorte } from '../utils/paginacao';
 import { logModel } from './logModel';
 
+/**
+ * RN0074: as compras que contam como venda efetivada. O DRS lista estes
+ * três; uma compra depois trocada sai da conta, e ele não diz o contrário.
+ * Serve ao ranking do cliente (RN0027) e ao gráfico gerencial.
+ */
+export const SITUACOES_EFETIVADAS = [
+  SituacaoPedido.APROVADA,
+  SituacaoPedido.EM_TRANSPORTE,
+  SituacaoPedido.ENTREGUE,
+] as const;
+
 /** Um item da compra, já com o produto copiado pelo service. */
 export interface ItemParaGravar {
   produtoId: number;
@@ -259,6 +270,23 @@ export const pedidosModel = {
     return linhas
       .map(l => l.cartao)
       .filter((c): c is { numero: string } => c !== null);
+  },
+
+  /**
+   * RN0027: quanto o cliente já gastou em compras efetivadas. Usa os
+   * mesmos três status da RN0074 — uma compra reprovada não foi paga, e
+   * uma em processamento ainda não se sabe se será.
+   */
+  async totalGastoPeloCliente(
+    clienteId: number,
+    tx: Executor = prisma,
+  ): Promise<number> {
+    const { _sum } = await tx.pedido.aggregate({
+      where: { clienteId, situacao: { in: [...SITUACOES_EFETIVADAS] } },
+      _sum: { total: true },
+    });
+
+    return _sum.total?.toNumber() ?? 0;
   },
 
   /** RN0036: registra no pedido o cupom emitido com a sobra dos cupons. */

@@ -25,6 +25,7 @@ import { Paginacao } from '../types/common/types';
 import { Endereco } from '../types/enderecos/types';
 import { Pet } from '../types/pets/types';
 import { recorte } from '../utils/paginacao';
+import { Executor } from '../utils/transacao';
 
 /** O cliente sempre viaja com o telefone; é parte do seu registro (RN0026). */
 const comTelefone = { telefone: true } as const;
@@ -296,8 +297,12 @@ export const clientesModel = {
   },
 
   /** RN0027: gravado pelo service depois de recalcular a nota. */
-  async atualizarRanking(id: number, ranking: number): Promise<Cliente> {
-    const linha = await prisma.cliente.update({
+  async atualizarRanking(
+    id: number,
+    ranking: number,
+    tx: Executor = prisma,
+  ): Promise<Cliente> {
+    const linha = await tx.cliente.update({
       where: { id },
       data: { ranking },
       include: comTudo,

@@ -41,6 +41,7 @@ import { ApiError } from '../utils/ApiError';
 import { montarPagina } from '../utils/paginacao';
 import { executarEmTransacao } from '../utils/transacao';
 import { carrinhoService } from './carrinhoService';
+import { clientesService } from './clientesService';
 import { cuponsService } from './cuponsService';
 import { estoqueService } from './estoqueService';
 
@@ -339,6 +340,9 @@ export const pedidosService = {
         }
 
         await cuponsService.marcarUtilizados(cupons.map(c => c.id), tx);
+
+        // RN0027: a compra efetivada muda o perfil de compras do cliente.
+        await clientesService.atualizarRanking(clienteId, tx);
 
         // RN0036: o que sobrou dos cupons vira um cupom novo.
         if (troco > 0) {

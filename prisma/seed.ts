@@ -35,6 +35,7 @@ import {
   ProdutoSeed,
   produtos,
 } from './catalogo';
+import { calcularRanking } from '../src/services/clientesService';
 import { gerarHistorico, PRIMEIRO_ID_HISTORICO } from './historico';
 
 const prisma = new PrismaClient();
@@ -593,6 +594,30 @@ const carregarHistorico = async (): Promise<void> => {
   );
 };
 
+/**
+ * RN0027: o ranking sai do que o cliente gastou em compras efetivadas. O
+ * cadastro nasce com um valor fixo, e o histórico entra depois — sem este
+ * acerto a base ficaria incoerente, com cliente de milhares em compras
+ * exibindo o ranking de quem nunca comprou. Em operação quem recalcula é
+ * a aprovação da compra; aqui é o acerto da carga.
+ */
+const recalcularRankings = async (): Promise<void> => {
+  const totais = await prisma.pedido.groupBy({
+    by: ['clienteId'],
+    where: { situacao: { in: ['APROVADA', 'EM_TRANSPORTE', 'ENTREGUE'] } },
+    _sum: { total: true },
+  });
+
+  for (const { clienteId, _sum } of totais) {
+    await prisma.cliente.update({
+      where: { id: clienteId },
+      data: { ranking: calcularRanking(_sum.total?.toNumber() ?? 0) },
+    });
+  }
+
+  console.log(`Ranking: recalculado para ${totais.length} clientes com compras.`);
+};
+
 const main = async (): Promise<void> => {
   await carregarDominios();
   await carregarClientes();
@@ -601,6 +626,7 @@ const main = async (): Promise<void> => {
   await carregarEstoque();
   await carregarCupons();
   await carregarHistorico();
+  await recalcularRankings();
 };
 
 main()

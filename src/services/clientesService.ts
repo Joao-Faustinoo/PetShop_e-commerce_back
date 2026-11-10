@@ -14,6 +14,7 @@
  */
 
 import { clientesModel, DadosEndereco } from '../models/clientesModel';
+import { pedidosModel } from '../models/pedidosModel';
 import {
   AlterarClientePayload,
   AlterarSituacaoPayload,
@@ -22,19 +23,26 @@ import {
   CriarClientePayload,
 } from '../types/clientes/types';
 import { Pagina, Paginacao } from '../types/common/types';
+import { Pedido } from '../types/pedidos/types';
 import { ApiError } from '../utils/ApiError';
 import { montarPagina } from '../utils/paginacao';
+import { Executor } from '../utils/transacao';
 import { apenasDigitos, cpfValido } from '../validations/clienteSchema';
 
 /**
  * RN0027: o ranking sai do perfil de compras — quanto mais o cliente gastou
- * em compras efetivadas, maior a nota, de 1 a 5. As faixas são as mesmas do
- * front (`e-commerce/src/service/clientes/service.ts`).
+ * em compras efetivadas (RN0074), maior a nota, de 1 a 5.
+ *
+ * O DRS pede "um ranking numérico com base em seu perfil de compras" e não
+ * diz mais nada: nem fórmula, nem escala, nem faixas. Estas são premissa do
+ * projeto, calibradas pela base real — os clientes vão de pouco mais de mil
+ * a quase treze mil reais em dois anos, e faixas apertadas demais colocariam
+ * todo mundo em 5, que é um ranking que não distingue ninguém.
  */
 export const calcularRanking = (totalGasto: number): number => {
-  if (totalGasto >= 1500) return 5;
-  if (totalGasto >= 800) return 4;
-  if (totalGasto >= 400) return 3;
+  if (totalGasto >= 10000) return 5;
+  if (totalGasto >= 7500) return 4;
+  if (totalGasto >= 5000) return 3;
   if (totalGasto > 0) return 2;
 
   return 1;
@@ -184,28 +192,37 @@ export const clientesService = {
   /**
    * RF0025: todas as transações já realizadas pelo cliente.
    *
-   * PENDENTE: depende da tabela Pedido, que entra com a fatia de vendas.
-   * Enquanto ela não existe, a rota confirma que o cliente existe e devolve
-   * a lista vazia, em vez de prometer um dado que o banco ainda não guarda.
-   * Ao portar `pedidosModel`, trocar por uma consulta em Pedido filtrada por
-   * `clienteId` e ordenada por `dataCompra` decrescente.
+   * O DRS não define o que é uma "transação". Adotamos a compra: é o que o
+   * sistema registra, é o que a tela do administrador exibe no cadastro, e
+   * é do que o ranking da RN0027 depende.
    */
-  async listarTransacoes(id: number): Promise<[]> {
+  async listarTransacoes(id: number): Promise<Pedido[]> {
     await exigirCliente(id);
 
-    return [];
+    // O teto de 100 da paginação basta: é o histórico de um cliente só,
+    // exibido inteiro numa tabela dentro do cadastro dele.
+    const { itens } = await pedidosModel.listar(
+      { clienteId: id },
+      { pagina: 1, itensPorPagina: 100 },
+    );
+
+    return itens;
   },
 
   /**
-   * RN0027: reavalia o ranking após uma compra ser efetivada.
+   * RN0027: reavalia o ranking depois de uma compra ser efetivada.
    *
-   * PENDENTE pelo mesmo motivo acima — quem souber somar os pedidos é a
-   * fatia de vendas. `calcularRanking` já está pronta e recebe o total
-   * gasto; só falta quem o calcule a partir da tabela Pedido.
+   * O DRS pede "um ranking numérico com base no perfil de compras" e não
+   * diz mais nada: nem fórmula, nem escala, nem quando recalcular. A
+   * premissa adotada é a soma gasta nas compras efetivadas, nas faixas de
+   * `calcularRanking`, reavaliada no momento em que a compra é aprovada.
+   *
+   * Roda dentro da transação do checkout: o ranking e a compra que o
+   * mudou precisam valer ou falhar juntos.
    */
-  async atualizarRanking(id: number, totalGasto: number): Promise<Cliente> {
-    await exigirCliente(id);
+  async atualizarRanking(id: number, tx: Executor): Promise<Cliente> {
+    const totalGasto = await pedidosModel.totalGastoPeloCliente(id, tx);
 
-    return clientesModel.atualizarRanking(id, calcularRanking(totalGasto));
+    return clientesModel.atualizarRanking(id, calcularRanking(totalGasto), tx);
   },
 };
