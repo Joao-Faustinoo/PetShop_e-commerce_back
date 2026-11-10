@@ -42,6 +42,7 @@ import { montarPagina } from '../utils/paginacao';
 import { executarEmTransacao } from '../utils/transacao';
 import { carrinhoService } from './carrinhoService';
 import { cuponsService } from './cuponsService';
+import { estoqueService } from './estoqueService';
 
 const duasCasas = (valor: number): number => Number(valor.toFixed(2));
 
@@ -318,10 +319,21 @@ export const pedidosService = {
       if (situacao === SituacaoPedido.APROVADA) {
         // RF0053 e RN0028: a baixa só acontece em compra efetivada.
         for (const item of itensAtivos) {
-          await estoqueModel.darBaixa(item.produtoId, item.quantidade, tx);
+          await estoqueModel.darBaixa(item.produtoId, item.quantidade, tx, {
+            pedidoId: pedidoCriadoId,
+            usuarioId,
+          });
           await produtosModel.incrementarTotalVendido(
             item.produtoId,
             item.quantidade,
+            tx,
+          );
+
+          // RF0013: é aqui que o saldo chega a zero, então é aqui que o
+          // sistema decide tirar o produto da vitrine.
+          await estoqueService.verificarInativacaoAutomatica(
+            item.produtoId,
+            usuarioId,
             tx,
           );
         }

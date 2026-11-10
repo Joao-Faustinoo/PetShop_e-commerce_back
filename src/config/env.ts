@@ -55,4 +55,11 @@ export const env = {
    * REPROVADA demonstrável sem depender de serviço externo.
    */
   finalCartaoRecusado: opcional('FINAL_CARTAO_RECUSADO', '0000'),
+
+  /**
+   * RF0013: o saldo a partir do qual o sistema inativa o produto sozinho.
+   * O DRS fala em "um parâmetro predefinido no sistema" sem nomeá-lo nem
+   * dar valor; zero é a leitura literal de "produtos sem estoque".
+   */
+  estoqueMinimoInativacao: inteiro('ESTOQUE_MINIMO_INATIVACAO', 0),
 } as const;

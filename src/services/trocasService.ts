@@ -225,7 +225,10 @@ export const trocasService = {
       // RF0054: reentrada dos itens trocados, se o administrador aprovar.
       if (retornarAoEstoque) {
         for (const item of troca.itens) {
-          await estoqueModel.darReentrada(item.produtoId, item.quantidade, tx);
+          await estoqueModel.darReentrada(item.produtoId, item.quantidade, tx, {
+            trocaId: id,
+            usuarioId,
+          });
         }
       }
 

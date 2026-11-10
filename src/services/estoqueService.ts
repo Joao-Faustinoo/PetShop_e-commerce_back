@@ -12,6 +12,7 @@
  * RNF0064
  */
 
+import { env } from '../config/env';
 import { estoqueModel } from '../models/estoqueModel';
 import { logModel } from '../models/logModel';
 import { produtosModel } from '../models/produtosModel';
@@ -24,7 +25,7 @@ import {
 } from '../types/estoque/types';
 import { ApiError } from '../utils/ApiError';
 import { montarPagina } from '../utils/paginacao';
-import { executarEmTransacao } from '../utils/transacao';
+import { executarEmTransacao, Executor } from '../utils/transacao';
 import { calcularValorVenda } from './produtosService';
 
 const ENTIDADE = 'Estoque';
@@ -105,6 +106,31 @@ export const estoqueService = {
         );
       }
 
+      /*
+       * RF0016 e RN0017: o produto que o sistema inativou por falta de
+       * estoque volta sozinho quando o estoque volta. Reativar à mão o que
+       * foi inativado à revelia do administrador seria trabalho inventado.
+       * A inativação feita por pessoa não é desfeita aqui: ela tem motivo
+       * próprio e só quem a decidiu deve revertê-la.
+       */
+      if (!produto.ativo && (await produtosModel.inativadoAutomaticamente(produto.id, tx))) {
+        const motivo = await produtosModel.motivoReposicao(tx);
+
+        if (motivo) {
+          await produtosModel.alterarSituacao(
+            produto.id,
+            {
+              ativo: true,
+              motivoInativacaoId: null,
+              motivoAtivacaoId: motivo,
+              justificativaSituacao:
+                'Reativado automaticamente pela entrada de itens em estoque.',
+            },
+            tx,
+          );
+        }
+      }
+
       await logModel.registrar(
         {
           usuarioId,
@@ -128,5 +154,56 @@ export const estoqueService = {
     });
 
     return itens[0];
+  },
+
+  /**
+   * RF0013 e RN0016: o produto sem estoque é inativado pelo próprio
+   * sistema, categorizado como FORA DE LINHA. Roda depois da baixa da
+   * venda, dentro da mesma transação: é ali que o saldo chega a zero.
+   *
+   * O DRS fala em "um parâmetro predefinido no sistema" sem nomeá-lo nem
+   * dar valor. Adotamos `ESTOQUE_MINIMO_INATIVACAO`, com zero como padrão
+   * — a leitura literal de "produtos sem estoque".
+   */
+  async verificarInativacaoAutomatica(
+    produtoId: number,
+    usuarioId: number,
+    tx: Executor,
+  ): Promise<void> {
+    const { emEstoque } = await estoqueModel.saldo(produtoId, tx);
+
+    if (emEstoque > env.estoqueMinimoInativacao) return;
+
+    const produto = await produtosModel.buscarPorId(produtoId);
+
+    if (!produto || !produto.ativo) return;
+
+    const motivo = await produtosModel.motivoAutomatico(tx);
+
+    if (!motivo) return;
+
+    await produtosModel.alterarSituacao(
+      produtoId,
+      {
+        ativo: false,
+        motivoInativacaoId: motivo,
+        motivoAtivacaoId: null,
+        justificativaSituacao:
+          'Inativado automaticamente: o estoque chegou ao mínimo definido no sistema.',
+      },
+      tx,
+    );
+
+    await logModel.registrar(
+      {
+        usuarioId,
+        operacao: 'ALTERACAO',
+        entidade: 'Produto',
+        entidadeId: produtoId,
+        antes: { ativo: true },
+        depois: { ativo: false, motivoId: motivo, automatico: true },
+      },
+      tx,
+    );
   },
 };

@@ -237,6 +237,39 @@ export const produtosModel = {
     return null;
   },
 
+  /** RN0016: o motivo que o sistema usa ao inativar sozinho. */
+  async motivoAutomatico(tx: Executor = prisma): Promise<number | null> {
+    const motivo = await tx.motivoInativacao.findFirst({
+      where: { automatico: true },
+      select: { id: true },
+    });
+
+    return motivo?.id ?? null;
+  },
+
+  /** O motivo de ativação usado quando o estoque é reposto. */
+  async motivoReposicao(tx: Executor = prisma): Promise<number | null> {
+    const motivo = await tx.motivoAtivacao.findFirst({
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    });
+
+    return motivo?.id ?? null;
+  },
+
+  /** Distingue o que o sistema inativou do que uma pessoa inativou. */
+  async inativadoAutomaticamente(
+    produtoId: number,
+    tx: Executor = prisma,
+  ): Promise<boolean> {
+    const produto = await tx.produto.findUnique({
+      where: { id: produtoId },
+      select: { motivoInativacao: { select: { automatico: true } } },
+    });
+
+    return produto?.motivoInativacao?.automatico === true;
+  },
+
   /** RN0015 e RN0017: o motivo precisa existir na tabela do seu sentido. */
   async motivoExiste(
     ativacao: boolean,
