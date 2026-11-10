@@ -17,6 +17,7 @@ import { Router } from 'express';
 
 import { analiseRoutes } from './analiseRoutes';
 import { authRoutes } from './authRoutes';
+import { chatRoutes } from './chatRoutes';
 import { clientesRoutes } from './clientesRoutes';
 import { carrinhoRoutes } from './carrinhoRoutes';
 import { cartoesRoutes } from './cartoesRoutes';
@@ -52,3 +53,4 @@ rotas.use('/logs', logRoutes);
 rotas.use('/pets', petsRoutes);
 rotas.use('/estoque', estoqueRoutes);
 rotas.use('/analise', analiseRoutes);
+rotas.use('/assistente', chatRoutes);

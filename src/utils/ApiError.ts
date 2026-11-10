@@ -44,6 +44,15 @@ export class ApiError extends Error {
   }
 
   /** Choca com um registro existente — CPF ou e-mail já cadastrado. */
+  /**
+   * O serviço externo de que a operação depende não respondeu. Não é erro
+   * do cliente nem defeito nosso: separá-lo do 500 deixa claro para quem
+   * chama que a requisição estava certa e pode ser repetida.
+   */
+  static servicoIndisponivel(mensagem: string): ApiError {
+    return new ApiError(503, mensagem);
+  }
+
   static conflito(mensagem: string): ApiError {
     return new ApiError(409, mensagem);
   }

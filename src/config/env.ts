@@ -62,4 +62,14 @@ export const env = {
    * dar valor; zero é a leitura literal de "produtos sem estoque".
    */
   estoqueMinimoInativacao: inteiro('ESTOQUE_MINIMO_INATIVACAO', 0),
+
+  /**
+   * RNF0047: a chave do Google Gemini. É `opcional`, e não `obrigatoria`,
+   * de propósito: sem ela a API precisa subir do mesmo jeito, e só o
+   * assistente responde indisponível. Exigi-la no boot deixaria o sistema
+   * inteiro fora do ar por causa de uma funcionalidade periférica.
+   */
+  geminiApiKey: opcional('GEMINI_API_KEY', ''),
+  geminiModelo: opcional('GEMINI_MODELO', 'gemini-2.0-flash'),
+  geminiTimeoutMs: inteiro('GEMINI_TIMEOUT_MS', 15000),
 } as const;
