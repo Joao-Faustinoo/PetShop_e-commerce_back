@@ -70,6 +70,6 @@ export const env = {
    * inteiro fora do ar por causa de uma funcionalidade periférica.
    */
   geminiApiKey: opcional('GEMINI_API_KEY', ''),
-  geminiModelo: opcional('GEMINI_MODELO', 'gemini-2.0-flash'),
+  geminiModelo: opcional('GEMINI_MODELO', 'gemini-3.1-flash-lite'),
   geminiTimeoutMs: inteiro('GEMINI_TIMEOUT_MS', 15000),
 } as const;

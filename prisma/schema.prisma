@@ -144,8 +144,36 @@ model Cliente {
   trocas       Troca[]
   notificacoes Notificacao[]
 
+  interacoesChat InteracaoChat[]
+
   @@index([nome])
   @@map("cliente")
+}
+
+/// RNF0047: cada pergunta ao assistente e a resposta que o modelo deu,
+/// com os produtos que acompanharam a sugestão e a avaliação do cliente.
+/// É daqui que sai o conjunto de treino do recomendador: produto sugerido
+/// em resposta marcada como útil é sinal positivo; em resposta marcada
+/// como não útil, negativo.
+model InteracaoChat {
+  id                Int       @id @default(autoincrement())
+  clienteId         Int       @map("cliente_id")
+  pergunta          String
+  resposta          String
+  /// Os ids dos produtos anexados à resposta, na ordem em que foram
+  /// sugeridos — a posição é parte do sinal, porque o primeiro da lista
+  /// é o que o assistente recomendou com mais convicção.
+  produtosSugeridos Int[]     @map("produtos_sugeridos")
+  /// true = útil, false = não útil, null = ainda não avaliada.
+  util              Boolean?
+  avaliadoEm        DateTime? @map("avaliado_em")
+  dataHora          DateTime  @default(now()) @map("data_hora")
+
+  cliente Cliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+
+  @@index([clienteId, dataHora])
+  @@index([util])
+  @@map("interacao_chat")
 }
 
 /// RN0026: composto por tipo, DDD e número. Um por cliente — daí o `@unique`

@@ -10,11 +10,11 @@
  * entra. O recorte acontece ANTES de pontuar, e não depois: uma roupa de
  * gato bem avaliada continua sem servir a um cão.
  *
- * Sobre a RNF0047: o DRS pede um modelo "treinado com base em dados de
- * vendas e feedback". Treinar modelo generativo não é viável nem
- * apropriado aqui; o que o sistema faz — e é o que se faz na prática — é
- * levar esses dados ao modelo como contexto da pergunta. A premissa fica
- * registrada.
+ * Sobre a RNF0047: o modelo generativo responde a partir do contexto do
+ * cliente, e cada interação é gravada com a avaliação que ele deu à
+ * resposta. Esse registro é a matéria-prima do recomendador treinado —
+ * quem ordena os candidatos antes de eles chegarem ao prompt. A premissa
+ * está escrita em docs/PREMISSAS.md.
  *
  * ATENDE: RNF0047
  */
@@ -24,6 +24,8 @@ import { produtosModel } from '../models/produtosModel';
 import { ContextoRecomendacao, Mensagem } from '../types/chat/types';
 import { Pet } from '../types/pets/types';
 import { Produto } from '../types/produtos/types';
+import { ApiError } from '../utils/ApiError';
+import { executarEmTransacao } from '../utils/transacao';
 
 /** Quantos produtos o assistente anexa à resposta. */
 const MAXIMO_SUGESTOES = 4;
@@ -128,17 +130,53 @@ export const chatService = {
       contexto,
     );
 
+    const pergunta = texto.trim();
     const resposta = await chatModel.perguntar(
       montarInstrucao(contexto, candidatos),
-      texto.trim(),
+      pergunta,
+    );
+
+    const sugeridos = candidatos.slice(0, MAXIMO_SUGESTOES);
+
+    /*
+     * A gravação vem depois da resposta, de propósito: se o modelo falhar,
+     * não fica interação órfã no banco para o treino ler como se tivesse
+     * havido conversa.
+     */
+    const interacao = await executarEmTransacao(tx =>
+      chatModel.registrarInteracao(
+        {
+          clienteId,
+          pergunta,
+          resposta,
+          produtosSugeridos: sugeridos.map(p => p.id),
+        },
+        tx,
+      ),
     );
 
     return {
-      id: Date.now(),
+      id: interacao.id,
       autor: 'ASSISTENTE',
       texto: resposta,
-      dataHora: new Date().toISOString(),
-      produtosSugeridos: candidatos.slice(0, MAXIMO_SUGESTOES),
+      dataHora: interacao.dataHora,
+      produtosSugeridos: sugeridos,
     };
+  },
+
+  /**
+   * RNF0047 item 3: o cliente diz se a resposta serviu. É o sinal que o
+   * treinamento do recomendador consome, e por isso a avaliação pode ser
+   * trocada — quem mudou de ideia corrige, e o dado reflete a opinião
+   * final, não a primeira.
+   */
+  async avaliar(clienteId: number, id: number, util: boolean): Promise<void> {
+    const avaliou = await executarEmTransacao(tx =>
+      chatModel.avaliar(id, clienteId, util, tx),
+    );
+
+    if (!avaliou) {
+      throw ApiError.naoEncontrado('Resposta não encontrada nesta conversa.');
+    }
   },
 };

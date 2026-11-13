@@ -23,6 +23,8 @@
 
 import { PrismaClient } from '@prisma/client';
 
+import { PRIMEIRO_ID_FEEDBACK } from './feedback';
+
 import { cupons as cuponsDoSeed } from './catalogo';
 
 const prisma = new PrismaClient();
@@ -170,9 +172,27 @@ const reporCupons = async (): Promise<void> => {
   );
 };
 
+/**
+ * RNF0047: as conversas com o assistente feitas em desenvolvimento. As da
+ * carga do seed têm id a partir de PRIMEIRO_ID_FEEDBACK e ficam — são a
+ * massa de treino, não resíduo de teste.
+ */
+const limparConversas = async (): Promise<void> => {
+  const { count } = await prisma.interacaoChat.deleteMany({
+    where: { id: { lt: PRIMEIRO_ID_FEEDBACK } },
+  });
+
+  console.log(
+    count > 0
+      ? `Assistente: ${count} conversa(s) de desenvolvimento removida(s).`
+      : 'Assistente: nada a limpar.',
+  );
+};
+
 const main = async (): Promise<void> => {
   await limparClientes();
   await limparCompraDosTestes();
+  await limparConversas();
   await reporCupons();
 };
 

@@ -36,6 +36,7 @@ import {
   produtos,
 } from './catalogo';
 import { calcularRanking } from '../src/services/clientesService';
+import { gerarFeedback, PRIMEIRO_ID_FEEDBACK } from './feedback';
 import { gerarHistorico, PRIMEIRO_ID_HISTORICO } from './historico';
 
 const prisma = new PrismaClient();
@@ -595,6 +596,65 @@ const carregarHistorico = async (): Promise<void> => {
 };
 
 /**
+ * RNF0047: as conversas avaliadas, que são o conjunto de treino do
+ * recomendador. Roda depois do histórico porque a preferência de cada
+ * cliente é lida das compras dele — sem histórico não há do que derivar.
+ */
+const carregarFeedback = async (): Promise<void> => {
+  // As categorias de cada cliente, pela frequência no que ele comprou. É
+  // a mesma leitura que o chatModel faz para montar o contexto.
+  const itens = await prisma.itemPedido.findMany({
+    where: { pedido: { clienteId: { not: 1 } } },
+    select: {
+      pedido: { select: { clienteId: true } },
+      produto: { select: { categorias: { select: { categoriaId: true } } } },
+    },
+  });
+
+  const frequencia = new Map<number, Map<number, number>>();
+
+  for (const item of itens) {
+    const doCliente =
+      frequencia.get(item.pedido.clienteId) ?? new Map<number, number>();
+
+    for (const { categoriaId } of item.produto.categorias) {
+      doCliente.set(categoriaId, (doCliente.get(categoriaId) ?? 0) + 1);
+    }
+
+    frequencia.set(item.pedido.clienteId, doCliente);
+  }
+
+  const clientes = [...frequencia.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([id, contagem]) => ({
+      id,
+      categoriasPreferidas: [...contagem.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([categoriaId]) => categoriaId),
+    }));
+
+  const categorizados = produtos
+    .filter(p => p.ativo)
+    .map(p => ({ id: p.id, nome: p.nome, categoriaIds: p.categoriaIds }));
+
+  const interacoes = gerarFeedback(clientes, categorizados);
+
+  await prisma.interacaoChat.deleteMany({
+    where: { id: { gte: PRIMEIRO_ID_FEEDBACK } },
+  });
+  await prisma.interacaoChat.createMany({ data: interacoes });
+
+  const uteis = interacoes.filter(i => i.util === true).length;
+  const naoUteis = interacoes.filter(i => i.util === false).length;
+
+  console.log(
+    `Feedback: ${interacoes.length} conversas de ${clientes.length} clientes — ` +
+      `${uteis} úteis, ${naoUteis} não úteis e ` +
+      `${interacoes.length - uteis - naoUteis} sem avaliação.`,
+  );
+};
+
+/**
  * RN0027: o ranking sai do que o cliente gastou em compras efetivadas. O
  * cadastro nasce com um valor fixo, e o histórico entra depois — sem este
  * acerto a base ficaria incoerente, com cliente de milhares em compras
@@ -626,6 +686,7 @@ const main = async (): Promise<void> => {
   await carregarEstoque();
   await carregarCupons();
   await carregarHistorico();
+  await carregarFeedback();
   await recalcularRankings();
 };
 

@@ -33,9 +33,25 @@ const mensagemSchema = z.object({
 
 export const chatRoutes = Router();
 
+/** A avaliação é um booleano e nada mais: útil ou não útil. */
+const avaliacaoSchema = z.object({
+  util: z.boolean({ required_error: 'Informe se a resposta foi útil.' }),
+});
+
+const idInteracaoSchema = z.object({
+  id: z.coerce.number().int().positive('Id de resposta inválido.'),
+});
+
 chatRoutes.post(
   '/mensagens',
   autenticacao,
   validar({ body: mensagemSchema }),
   chatController.responder,
+);
+
+chatRoutes.patch(
+  '/mensagens/:id/feedback',
+  autenticacao,
+  validar({ params: idInteracaoSchema, body: avaliacaoSchema }),
+  chatController.avaliar,
 );
