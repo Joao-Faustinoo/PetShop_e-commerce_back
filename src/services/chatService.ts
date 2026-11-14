@@ -34,16 +34,24 @@ const MAXIMO_SUGESTOES = 4;
 const CATALOGO_NO_PROMPT = 30;
 
 /**
- * Os produtos que servem ao pet. Espécie e porte são recorte, não
- * pontuação: um produto que não serve não deve aparecer nem em último
- * lugar. Afrouxa primeiro o porte e depois a espécie, porque é melhor
- * sugerir algo do tamanho errado do que devolver a conversa vazia.
+ * Os produtos que servem aos pets do cliente. Espécie e porte são
+ * recorte, não pontuação: um produto que não serve não deve aparecer nem
+ * em último lugar. Afrouxa primeiro o porte e depois a espécie, porque é
+ * melhor sugerir algo do tamanho errado do que devolver a conversa vazia.
+ *
+ * Olha TODOS os pets, não só o primeiro: quem tem um cão e um gato
+ * precisa enxergar as duas prateleiras. Filtrar pelo primeiro fazia o
+ * assistente responder que não há nada para o segundo animal, o que é
+ * falso — e some justamente quando a pessoa pergunta por ele.
  */
-const servemAoPet = (produtos: Produto[], pet: Pet | undefined): Produto[] => {
-  if (!pet) return produtos;
+const servemAosPets = (produtos: Produto[], pets: Pet[]): Produto[] => {
+  if (pets.length === 0) return produtos;
 
-  const daEspecie = produtos.filter(p => p.especie === pet.especie);
-  const doPorte = daEspecie.filter(p => p.porte === pet.porte);
+  const especies = new Set(pets.map(p => p.especie));
+  const portes = new Set(pets.map(p => p.porte));
+
+  const daEspecie = produtos.filter(p => especies.has(p.especie));
+  const doPorte = daEspecie.filter(p => portes.has(p.porte));
 
   if (doPorte.length > 0) return doPorte;
   if (daEspecie.length > 0) return daEspecie;
@@ -67,6 +75,35 @@ const pontuar = (produto: Produto, contexto: ContextoRecomendacao): number => {
   if (contexto.produtosComprados.includes(produto.id)) pontos -= 5;
 
   return pontos;
+};
+
+/**
+ * Os produtos que a resposta realmente citou, na ordem em que aparecem no
+ * texto.
+ *
+ * POR QUE existe: o modelo recebe os trinta produtos mais aderentes e
+ * escolhe entre eles, mas os cards mostravam sempre os quatro primeiros
+ * dessa lista — então o texto podia recomendar o Moletom enquanto a tela
+ * exibia a Bandana. Quem lê os dois ao mesmo tempo vê a contradição.
+ *
+ * A identificação é por correspondência exata contra os nomes que foram
+ * enviados no prompt, não por interpretação do texto: é comparar com
+ * trinta strings conhecidas, não adivinhar o que a frase quis dizer.
+ *
+ * Sem nenhuma citação — numa resposta que só faz uma pergunta de volta,
+ * por exemplo — o chamador decide o que mostrar.
+ */
+const citadosNaResposta = (
+  resposta: string,
+  candidatos: Produto[],
+): Produto[] => {
+  const texto = resposta.toLowerCase();
+
+  return candidatos
+    .map(produto => ({ produto, posicao: texto.indexOf(produto.nome.toLowerCase()) }))
+    .filter(({ posicao }) => posicao >= 0)
+    .sort((a, b) => a.posicao - b.posicao)
+    .map(({ produto }) => produto);
 };
 
 /** Ordena pelo que mais combina com o histórico do cliente. */
@@ -101,7 +138,7 @@ const montarInstrucao = (
   return [
     'Você é o assistente de uma loja de roupas e acessórios para pets.',
     'Responda em português do Brasil, em no máximo três frases, com tom cordial e direto.',
-    'Recomende apenas produtos da lista abaixo, citando o nome. Nunca invente produto, preço ou prazo.',
+    'Recomende apenas produtos da lista abaixo, escrevendo o nome exatamente como ele aparece nela. Nunca invente produto, preço ou prazo.',
     'Se nada na lista servir, diga isso com franqueza e ofereça ajuda para refinar a busca.',
     'Não fale de assunto fora da loja e dos cuidados com o pet.',
     '',
@@ -126,7 +163,7 @@ export const chatService = {
     const disponiveis = itens.filter(p => p.quantidadeEstoque > 0);
 
     const candidatos = ordenarPorAfinidade(
-      servemAoPet(disponiveis, contexto.pets[0]),
+      servemAosPets(disponiveis, contexto.pets),
       contexto,
     );
 
@@ -136,7 +173,16 @@ export const chatService = {
       pergunta,
     );
 
-    const sugeridos = candidatos.slice(0, MAXIMO_SUGESTOES);
+    /*
+     * O que a resposta citou vem primeiro. Quando ela não cita nada, os
+     * mais aderentes entram como vitrine — é melhor oferecer caminho do
+     * que deixar a conversa sem nada para clicar.
+     */
+    const citados = citadosNaResposta(resposta, candidatos);
+    const sugeridos = (citados.length > 0 ? citados : candidatos).slice(
+      0,
+      MAXIMO_SUGESTOES,
+    );
 
     /*
      * A gravação vem depois da resposta, de propósito: se o modelo falhar,

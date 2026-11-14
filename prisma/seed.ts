@@ -26,14 +26,15 @@ import {
   cores,
   cupons,
   fornecedores,
-  motivosAtivacao,
-  motivosInativacao,
   gruposPrecificacao,
   marcas,
   materiais,
+  motivosAtivacao,
+  motivosInativacao,
+  pets,
   portes,
-  ProdutoSeed,
   produtos,
+  ProdutoSeed,
 } from './catalogo';
 import { calcularRanking } from '../src/services/clientesService';
 import { gerarFeedback, PRIMEIRO_ID_FEEDBACK } from './feedback';
@@ -600,6 +601,25 @@ const carregarHistorico = async (): Promise<void> => {
  * recomendador. Roda depois do histórico porque a preferência de cada
  * cliente é lida das compras dele — sem histórico não há do que derivar.
  */
+/**
+ * RF0028: os pets dos clientes. Recriados a cada carga — são dado de
+ * demonstração, e o cadastro feito à mão durante um teste não precisa
+ * sobreviver a um `npm run seed`.
+ */
+const carregarPets = async (): Promise<void> => {
+  await prisma.pet.deleteMany({
+    where: { clienteId: { in: pets.map(p => p.clienteId) } },
+  });
+  await prisma.pet.createMany({ data: pets });
+
+  const caes = pets.filter(p => p.especie === 'CAO').length;
+
+  console.log(
+    `Pets: ${pets.length} cadastrados — ${caes} cães e ${pets.length - caes} ` +
+      'gatos, em 8 clientes.',
+  );
+};
+
 const carregarFeedback = async (): Promise<void> => {
   // As categorias de cada cliente, pela frequência no que ele comprou. É
   // a mesma leitura que o chatModel faz para montar o contexto.
@@ -685,6 +705,7 @@ const main = async (): Promise<void> => {
   await carregarProdutos();
   await carregarEstoque();
   await carregarCupons();
+  await carregarPets();
   await carregarHistorico();
   await carregarFeedback();
   await recalcularRankings();

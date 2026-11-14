@@ -141,6 +141,38 @@ export interface ProdutoSeed {
  * saldo (PET-0015 e PET-0017), para que os filtros da RF0015 e a validação
  * de disponibilidade da RN0031 tenham o que encontrar.
  */
+/**
+ * RF0028 e RNF0047: os pets dos clientes do seed.
+ *
+ * POR QUE existem: sem pet, o assistente não tem espécie nem porte para
+ * recortar o catálogo, responde pedindo o cadastro, e metade da
+ * personalização fica inerte justamente na demonstração. Cada cliente tem
+ * um animal diferente, e os clientes 1 e 2 têm dois, para a sugestão
+ * mudar de forma visível de uma conta para a outra.
+ *
+ * O peso respeita a faixa do porte declarado, como a tela de cadastro
+ * exige — pet de porte M pesa entre 7 e 15 kg.
+ */
+export const pets: {
+  clienteId: number;
+  nome: string;
+  especie: Especie;
+  raca: string;
+  porte: PorteSigla;
+  peso: number;
+}[] = [
+  { clienteId: 1, nome: 'Thor', especie: 'CAO', raca: 'Border Collie', porte: 'M', peso: 13.4 },
+  { clienteId: 1, nome: 'Nina', especie: 'GATO', raca: 'Siamês', porte: 'PP', peso: 2.8 },
+  { clienteId: 2, nome: 'Mel', especie: 'CAO', raca: 'Golden Retriever', porte: 'G', peso: 27.5 },
+  { clienteId: 2, nome: 'Pingo', especie: 'CAO', raca: 'Pinscher', porte: 'PP', peso: 2.4 },
+  { clienteId: 3, nome: 'Amora', especie: 'GATO', raca: 'Persa', porte: 'P', peso: 4.6 },
+  { clienteId: 4, nome: 'Bilu', especie: 'CAO', raca: 'Shih Tzu', porte: 'P', peso: 6.2 },
+  { clienteId: 5, nome: 'Zeus', especie: 'CAO', raca: 'Rottweiler', porte: 'GG', peso: 48.0 },
+  { clienteId: 6, nome: 'Fiona', especie: 'GATO', raca: 'Maine Coon', porte: 'M', peso: 8.1 },
+  { clienteId: 7, nome: 'Bart', especie: 'CAO', raca: 'Beagle', porte: 'M', peso: 11.3 },
+  { clienteId: 8, nome: 'Loki', especie: 'CAO', raca: 'Husky Siberiano', porte: 'G', peso: 22.7 },
+];
+
 export const produtos: ProdutoSeed[] = [
   {
     id: 1,

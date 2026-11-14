@@ -71,5 +71,10 @@ export const env = {
    */
   geminiApiKey: opcional('GEMINI_API_KEY', ''),
   geminiModelo: opcional('GEMINI_MODELO', 'gemini-3.1-flash-lite'),
-  geminiTimeoutMs: inteiro('GEMINI_TIMEOUT_MS', 15000),
+  /*
+   * 30 s, e não 15: medindo o flash-lite em uso real, a mediana ficou em
+   * 4 s mas uma resposta levou 14,96 s. Com o limite em 15 s, aquela
+   * pergunta teria virado erro na frente de quem está assistindo.
+   */
+  geminiTimeoutMs: inteiro('GEMINI_TIMEOUT_MS', 30000),
 } as const;
