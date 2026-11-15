@@ -644,6 +644,17 @@ const carregarFeedback = async (): Promise<void> => {
     frequencia.set(item.pedido.clienteId, doCliente);
   }
 
+  // As espécies dos pets entram no sinal: sugestão que erra a espécie é
+  // tão inútil quanto a que erra a categoria.
+  const especiesDoCliente = new Map<number, string[]>();
+
+  for (const pet of pets) {
+    especiesDoCliente.set(pet.clienteId, [
+      ...(especiesDoCliente.get(pet.clienteId) ?? []),
+      pet.especie,
+    ]);
+  }
+
   const clientes = [...frequencia.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([id, contagem]) => ({
@@ -651,11 +662,17 @@ const carregarFeedback = async (): Promise<void> => {
       categoriasPreferidas: [...contagem.entries()]
         .sort((a, b) => b[1] - a[1])
         .map(([categoriaId]) => categoriaId),
+      especies: [...new Set(especiesDoCliente.get(id) ?? [])],
     }));
 
   const categorizados = produtos
     .filter(p => p.ativo)
-    .map(p => ({ id: p.id, nome: p.nome, categoriaIds: p.categoriaIds }));
+    .map(p => ({
+      id: p.id,
+      nome: p.nome,
+      categoriaIds: p.categoriaIds,
+      especie: p.especie as string,
+    }));
 
   const interacoes = gerarFeedback(clientes, categorizados);
 
@@ -663,6 +680,15 @@ const carregarFeedback = async (): Promise<void> => {
     where: { id: { gte: PRIMEIRO_ID_FEEDBACK } },
   });
   await prisma.interacaoChat.createMany({ data: interacoes });
+
+  /*
+   * Os modelos treinados saem junto. Eles foram ajustados sobre as
+   * conversas que acabaram de ser substituídas: mantê-los deixaria a base
+   * num estado confuso, com um recomendador que diz ter aprendido de
+   * dados que não existem mais. Sem modelo, o assistente usa a heurística
+   * até o próximo `npm run treinar`.
+   */
+  await prisma.modeloRecomendacao.deleteMany();
 
   const uteis = interacoes.filter(i => i.util === true).length;
   const naoUteis = interacoes.filter(i => i.util === false).length;
@@ -672,6 +698,7 @@ const carregarFeedback = async (): Promise<void> => {
       `${uteis} úteis, ${naoUteis} não úteis e ` +
       `${interacoes.length - uteis - naoUteis} sem avaliação.`,
   );
+  console.log('  → rode `npm run treinar` para o recomendador aprender com elas.');
 };
 
 /**

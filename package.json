@@ -12,7 +12,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
-    "limpar:testes": "tsx prisma/limpar-testes.ts"
+    "limpar:testes": "tsx prisma/limpar-testes.ts",
+    "treinar": "tsx prisma/treinar.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

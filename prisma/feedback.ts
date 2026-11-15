@@ -9,11 +9,11 @@
  * conversas, e o modelo treinado em cima delas é reproduzível.
  *
  * POR QUE o sinal não é aleatório: a avaliação acompanha a aderência da
- * sugestão ao histórico do cliente. Quando a maioria dos produtos
- * sugeridos cai nas categorias que ele mais compra, a resposta tende a
- * "útil"; quando não cai, tende a "não útil". É essa correlação que o
- * treinamento aprende. Se o rótulo fosse sorteado, não haveria o que
- * aprender e o modelo treinado seria indistinguível de um chute.
+ * sugestão ao cliente — categoria que ele mais compra E espécie que serve
+ * a algum pet dele. Sugestão aderente tende a "útil"; sugestão que erra
+ * os dois tende a "não útil". É essa correlação que o treinamento
+ * aprende. Se o rótulo fosse sorteado, não haveria o que aprender e o
+ * modelo treinado seria indistinguível de um chute.
  *
  * POR QUE há ruído: uma fração das avaliações é invertida de propósito.
  * Dado real não é perfeitamente separável, e um conjunto sem ruído
@@ -77,12 +77,15 @@ export interface ClienteComPreferencia {
   id: number;
   /** Categorias que mais se repetem nas compras, da mais à menos frequente. */
   categoriasPreferidas: number[];
+  /** As espécies dos pets do cliente. */
+  especies: string[];
 }
 
 export interface ProdutoCategorizado {
   id: number;
   nome: string;
   categoriaIds: number[];
+  especie: string;
 }
 
 export interface InteracaoSemeada {
@@ -130,16 +133,24 @@ export const gerarFeedback = (
 
   for (const cliente of clientes) {
     const preferidas = new Set(cliente.categoriasPreferidas.slice(0, 2));
+    const especies = new Set(cliente.especies);
 
-    // Dois baldes: o que casa com o gosto do cliente e o que não casa.
-    const combinam = produtos.filter(p =>
-      p.categoriaIds.some(c => preferidas.has(c)),
-    );
-    const destoam = produtos.filter(
-      p => !p.categoriaIds.some(c => preferidas.has(c)),
-    );
+    const naCategoria = (p: ProdutoCategorizado): boolean =>
+      p.categoriaIds.some(c => preferidas.has(c));
+    const paraOPet = (p: ProdutoCategorizado): boolean =>
+      especies.size === 0 || especies.has(p.especie);
 
-    if (combinam.length < SUGESTOES || destoam.length < SUGESTOES) continue;
+    // Dois baldes: o que acerta categoria e espécie, e o que erra os dois.
+    const combinam = produtos.filter(p => naCategoria(p) && paraOPet(p));
+    const destoam = produtos.filter(p => !naCategoria(p) && !paraOPet(p));
+
+    /*
+     * Um cliente só fica de fora se um dos baldes estiver vazio — sem os
+     * dois não há contraste para treinar. Baldes pequenos são usados do
+     * tamanho que têm: pedir mais produtos distintos do que o balde
+     * contém faria o laço abaixo girar para sempre.
+     */
+    if (combinam.length === 0 || destoam.length === 0) continue;
 
     for (let n = entre(MINIMO_POR_CLIENTE, MAXIMO_POR_CLIENTE); n > 0; n -= 1) {
       /*
@@ -150,9 +161,10 @@ export const gerarFeedback = (
       const acertou = sortear() < 0.5;
       const balde = acertou ? combinam : destoam;
 
+      const quantas = Math.min(SUGESTOES, balde.length);
       const escolhidos: ProdutoCategorizado[] = [];
 
-      while (escolhidos.length < SUGESTOES) {
+      while (escolhidos.length < quantas) {
         const candidato = umDe(balde);
 
         if (!escolhidos.some(p => p.id === candidato.id)) {

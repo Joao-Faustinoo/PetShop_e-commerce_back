@@ -59,7 +59,7 @@ código, rode `python scripts/matriz.py` dentro de `api`.
 | **RNF0044** | Formatação monetária do eixo de valores | `front/components/Charts/LineChart/index.tsx`, `front/utils/formatCurrency.ts` | analise CT-03 |
 | **RNF0045** | Legenda do gráfico | `api/services/analiseService.ts`, `api/types/analise/types.ts`, `front/components/Charts/LineChart/index.tsx` _(+4)_ | analise CT-03 |
 | **RNF0046** | Interatividade do gráfico | `api/controllers/analiseController.ts`, `api/controllers/trocasController.ts`, `api/models/notificacoesModel.ts` _(+13)_ | analise CT-03 |
-| **RNF0047** | Recomendação com IA generativa | `api/config/env.ts`, `api/controllers/chatController.ts`, `api/models/chatModel.ts` _(+15)_ | — |
+| **RNF0047** | Recomendação com IA generativa | `api/config/env.ts`, `api/controllers/chatController.ts`, `api/models/chatModel.ts` _(+17)_ | — |
 | **RN0011** | Dados obrigatórios para o cadastro de um produto | `api/models/produtosModel.ts`, `api/services/produtosService.ts`, `api/types/produtos/types.ts` _(+7)_ | — |
 | **RN0012** | Associação com categorias | `api/models/analiseModel.ts`, `api/models/produtosModel.ts`, `api/services/produtosService.ts` _(+9)_ | — |
 | **RN0013** | Definindo valor de venda | `api/models/produtosModel.ts`, `api/services/estoqueService.ts`, `api/services/produtosService.ts` _(+8)_ | — |

@@ -21,10 +21,16 @@
 
 import { chatModel } from '../models/chatModel';
 import { produtosModel } from '../models/produtosModel';
+import { recomendacaoModel } from '../models/recomendacaoModel';
 import { ContextoRecomendacao, Mensagem } from '../types/chat/types';
 import { Pet } from '../types/pets/types';
 import { Produto } from '../types/produtos/types';
 import { ApiError } from '../utils/ApiError';
+import {
+  atributosDe,
+  PesosDoModelo,
+  pontuarComModelo,
+} from '../utils/recomendacao';
 import { executarEmTransacao } from '../utils/transacao';
 
 /** Quantos produtos o assistente anexa à resposta. */
@@ -59,7 +65,15 @@ const servemAosPets = (produtos: Produto[], pets: Pet[]): Produto[] => {
   return produtos;
 };
 
-const pontuar = (produto: Produto, contexto: ContextoRecomendacao): number => {
+/**
+ * A ordenação de partida, usada enquanto não existe modelo treinado — na
+ * base recém-criada, antes do primeiro `npm run treinar`. É a regra
+ * escrita à mão que o modelo substitui depois de aprender com o feedback.
+ */
+const pontuarPorHeuristica = (
+  produto: Produto,
+  contexto: ContextoRecomendacao,
+): number => {
   let pontos = 0;
 
   const posicaoCategoria = contexto.categoriasPreferidas.findIndex(c =>
@@ -106,12 +120,39 @@ const citadosNaResposta = (
     .map(({ produto }) => produto);
 };
 
-/** Ordena pelo que mais combina com o histórico do cliente. */
+/**
+ * RNF0047: ordena pelo que o modelo treinado prevê que o cliente vai
+ * achar útil. O treino aprendeu essa relação do feedback que os clientes
+ * deram às respostas e dos dados de venda; aqui ela é só aplicada.
+ *
+ * Sem modelo treinado, cai na heurística. É o que faz a base nova
+ * funcionar antes do primeiro treino, e o que mantém o assistente de pé
+ * se um treino gravar pesos que o código não reconhece.
+ */
 const ordenarPorAfinidade = (
   produtos: Produto[],
   contexto: ContextoRecomendacao,
-): Produto[] =>
-  [...produtos].sort((a, b) => pontuar(b, contexto) - pontuar(a, contexto));
+  modelo: PesosDoModelo | null,
+): Produto[] => {
+  if (!modelo) {
+    return [...produtos].sort(
+      (a, b) =>
+        pontuarPorHeuristica(b, contexto) - pontuarPorHeuristica(a, contexto),
+    );
+  }
+
+  // A popularidade é relativa ao catálogo, e precisa da mesma escala que
+  // o treino usou: o mais vendido entre os candidatos.
+  const maiorVenda = Math.max(...produtos.map(p => p.totalVendido), 1);
+
+  return produtos
+    .map(produto => ({
+      produto,
+      nota: pontuarComModelo(atributosDe(contexto, produto, maiorVenda), modelo),
+    }))
+    .sort((a, b) => b.nota - a.nota)
+    .map(({ produto }) => produto);
+};
 
 /** O que o modelo precisa saber para responder como vendedor desta loja. */
 const montarInstrucao = (
@@ -138,7 +179,7 @@ const montarInstrucao = (
   return [
     'Você é o assistente de uma loja de roupas e acessórios para pets.',
     'Responda em português do Brasil, em no máximo três frases, com tom cordial e direto.',
-    'Recomende apenas produtos da lista abaixo, escrevendo o nome exatamente como ele aparece nela. Nunca invente produto, preço ou prazo.',
+    'Recomende apenas produtos da lista abaixo. Escreva o nome do produto exatamente como ele aparece nela, sem repetir o código e sem o preço. Nunca invente produto, preço ou prazo.',
     'Se nada na lista servir, diga isso com franqueza e ofereça ajuda para refinar a busca.',
     'Não fale de assunto fora da loja e dos cuidados com o pet.',
     '',
@@ -162,9 +203,12 @@ export const chatService = {
     );
     const disponiveis = itens.filter(p => p.quantidadeEstoque > 0);
 
+    const modelo = await recomendacaoModel.maisRecente();
+
     const candidatos = ordenarPorAfinidade(
       servemAosPets(disponiveis, contexto.pets),
       contexto,
+      modelo?.pesos ?? null,
     );
 
     const pergunta = texto.trim();

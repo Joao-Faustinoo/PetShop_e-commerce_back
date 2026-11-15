@@ -191,14 +191,56 @@ O nome do usuário e a lista de campos alterados são derivados na leitura, e
 não gravados. Guardar o nome congelaria um que o cliente pode ter alterado
 depois; guardar a comparação duplicaria o dado.
 
-**RNF0047 — contexto, não treinamento.**
+**RNF0047 — dois modelos, e só um deles é treinado.**
 O DRS pede um modelo "treinado com base em dados de vendas e feedback dos
-usuários". Treinar um modelo generativo não é viável nem apropriado aqui — e
-não é o que se faz na prática com modelos de API. O sistema leva esses dados
-ao modelo **como contexto da pergunta**: os pets do cliente, o que ele já
-comprou, as categorias e marcas que mais se repetem no histórico, e o
-catálogo disponível. A instrução de sistema proíbe o modelo de inventar
-produto, preço ou prazo, e de sair do assunto da loja.
+usuários". O sistema tem dois modelos, com papéis distintos:
+
+- **O generativo (Google Gemini)** conversa. Recebe como contexto os pets do
+  cliente, o que ele já comprou, as preferências lidas do histórico e a lista
+  de produtos que o recomendador ordenou. A instrução de sistema o proíbe de
+  inventar produto, preço ou prazo, e de sair do assunto da loja.
+- **O recomendador**, treinado aqui, decide **quais produtos** entram nessa
+  lista e em que ordem. É uma regressão logística sobre seis atributos do par
+  (cliente, produto), ajustada com os dados de vendas e o feedback dos
+  clientes.
+
+**Por que o generativo não é ajustado.** A API do Google não oferece
+fine-tuning desde a descontinuação do Gemini 1.5 Flash-001, em maio de 2025,
+e a própria documentação diz que não há planos de retomá-lo; o ajuste existe
+apenas na Vertex AI, que exige projeto no Google Cloud com faturamento ativo.
+Treinar o recomendador é o que estava ao alcance do grupo — e é onde o dado
+de vendas e de feedback efetivamente muda o resultado.
+
+**Como o treino acontece.** `npm run treinar` lê as interações já avaliadas:
+cada produto sugerido vira um exemplo, com rótulo 1 se o cliente marcou a
+resposta como útil e 0 se marcou como não útil. Resposta sem avaliação fica
+de fora, porque não há rótulo. Os atributos de cada par saem de
+`src/utils/recomendacao.ts` — o mesmo arquivo que a recomendação usa, para
+que treino e uso não divirjam. São eles: posição da categoria e da marca nas
+preferências do cliente (lidas do histórico de compras), se ele já comprou o
+produto, se a espécie e o porte servem a algum pet dele, e o quanto o produto
+vende em relação ao mais vendido do catálogo. Trinta por cento dos exemplos
+ficam separados para validação. O ajuste é por descida de gradiente com
+regularização L2.
+
+**Como novos dados entram.** Cada resposta avaliada no chat é uma linha nova
+em `interacao_chat`, e cada compra muda as preferências e o total vendido.
+Rodar `npm run treinar` de novo lê o estado atual e grava a **versão
+seguinte** em `modelo_recomendacao`, sem apagar a anterior — dá para comparar
+e para voltar atrás. O assistente passa a usar a mais recente em até dez
+segundos, sem reiniciar nada.
+
+**Por que regressão logística.** O conjunto é pequeno, os atributos são
+poucos e o resultado é um peso por atributo que dá para ler em voz alta. No
+treino sobre a base semeada, `especieDoPet` pesou 2,40 e `categoriaPreferida`
+1,21 — que são exatamente os dois sinais que a carga de feedback codifica,
+com 88,7% de acerto no treino e 83,6% na validação. Uma rede neural acertaria
+tanto quanto e não explicaria nada.
+
+**Sem modelo treinado, o assistente não para.** A ordenação cai numa
+heurística escrita à mão — a mesma regra que existia antes do treino. É o que
+faz uma base recém-semeada funcionar, e o que segura o assistente de pé se um
+treino gravar pesos que o código não reconheça.
 
 Só produto ativo e com saldo entra na sugestão: oferecer o que a loja não
 pode entregar contraria a RN0031.

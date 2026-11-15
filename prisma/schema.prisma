@@ -150,6 +150,32 @@ model Cliente {
   @@map("cliente")
 }
 
+/// RNF0047 item 3: o recomendador treinado com os dados de vendas e o
+/// feedback dos clientes. Cada treino grava uma versão nova em vez de
+/// sobrescrever a anterior — é o que permite comparar o antes e o depois,
+/// e voltar atrás se um treino sair pior que o outro.
+///
+/// Os pesos são de uma regressão logística; `pesos` guarda um valor por
+/// atributo, mais o viés. O formato fica em `src/utils/recomendacao.ts`,
+/// que é o mesmo arquivo que extrai os atributos na hora de recomendar —
+/// treino e uso leem a mesma definição, e é isso que impede o modelo de
+/// ser treinado com uma conta e aplicado com outra.
+model ModeloRecomendacao {
+  id     Int  @id @default(autoincrement())
+  versao Int  @unique
+  pesos  Json
+
+  /// Quantos pares (cliente, produto) entraram no treino.
+  exemplos          Int
+  /// Acerto sobre os exemplos de treino e sobre os separados para teste.
+  acuraciaTreino    Float @map("acuracia_treino")
+  acuraciaValidacao Float @map("acuracia_validacao")
+
+  treinadoEm DateTime @default(now()) @map("treinado_em")
+
+  @@map("modelo_recomendacao")
+}
+
 /// RNF0047: cada pergunta ao assistente e a resposta que o modelo deu,
 /// com os produtos que acompanharam a sugestão e a avaliação do cliente.
 /// É daqui que sai o conjunto de treino do recomendador: produto sugerido
