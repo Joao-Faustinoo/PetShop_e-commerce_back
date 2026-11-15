@@ -232,10 +232,10 @@ segundos, sem reiniciar nada.
 
 **Por que regressão logística.** O conjunto é pequeno, os atributos são
 poucos e o resultado é um peso por atributo que dá para ler em voz alta. No
-treino sobre a base semeada, `especieDoPet` pesou 2,40 e `categoriaPreferida`
-1,21 — que são exatamente os dois sinais que a carga de feedback codifica,
-com 88,7% de acerto no treino e 83,6% na validação. Uma rede neural acertaria
-tanto quanto e não explicaria nada.
+treino sobre a base semeada, `especieDoPet` pesou 2,17 e `categoriaPreferida`
+1,33 — que são exatamente os dois sinais que a carga de feedback codifica,
+com 87,6% de acerto no treino e 89,6% na validação, sobre 543 pares. Uma rede
+neural acertaria tanto quanto e não explicaria nada.
 
 **Sem modelo treinado, o assistente não para.** A ordenação cai numa
 heurística escrita à mão — a mesma regra que existia antes do treino. É o que
