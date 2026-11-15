@@ -1,0 +1,15 @@
+{
+  // Verificação de tipos dos scripts de linha de comando — seed, treino e
+  // limpeza. Eles são TypeScript e rodam por `tsx`, mas ficam fora do
+  // tsconfig.json porque o `rootDir` da compilação é `src`: incluí-los lá
+  // mudaria o formato da pasta `dist`. Sem esta checagem, um nome não
+  // importado neles só aparecia na hora de executar.
+  //
+  // Uso: npm run verificar
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["prisma/**/*.ts", "scripts/**/*.ts", "src/**/*.ts"]
+}

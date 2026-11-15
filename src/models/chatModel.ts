@@ -20,19 +20,13 @@ import { prisma } from '../config/prisma';
 import { ContextoRecomendacao, InteracaoChat } from '../types/chat/types';
 import { Pet } from '../types/pets/types';
 import { ApiError } from '../utils/ApiError';
+import { porFrequencia } from '../utils/recomendacao';
 import { Executor } from '../utils/transacao';
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-/** Quantas vezes cada valor aparece, do mais frequente ao menos. */
-const porFrequencia = (valores: number[]): number[] => {
-  const contagem = new Map<number, number>();
-  valores.forEach(v => contagem.set(v, (contagem.get(v) ?? 0) + 1));
-
-  return [...contagem.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([valor]) => valor);
-};
+/** Quanto esperar antes da segunda tentativa, quando o modelo está ocupado. */
+const ESPERA_PARA_REPETIR_MS = 700;
 
 /** Datas viram texto ISO e o `null` do banco vira `undefined`, como nos
  *  outros models — o JSON da API não carrega tipo do Prisma. */
@@ -114,10 +108,8 @@ export const chatModel = {
       );
     }
 
-    let resposta: Response;
-
-    try {
-      resposta = await fetch(
+    const chamar = (): Promise<Response> =>
+      fetch(
         `${ENDPOINT}/${env.geminiModelo}:generateContent?key=${env.geminiApiKey}`,
         {
           method: 'POST',
@@ -129,6 +121,31 @@ export const chatModel = {
           signal: AbortSignal.timeout(env.geminiTimeoutMs),
         },
       );
+
+    let resposta: Response;
+
+    try {
+      resposta = await chamar();
+
+      /*
+       * Uma segunda tentativa quando o Google responde "ocupado". O modelo
+       * gratuito devolve 503 em picos de demanda e 429 ao estourar a cota
+       * por minuto — nos dois casos a mesma pergunta costuma passar logo
+       * em seguida. Medindo em uso real, falhou uma vez em trinta; sem a
+       * repetição, essa uma vira "assistente indisponível" na tela de quem
+       * está perguntando.
+       *
+       * Uma só repetição, e só para esses dois status: erro de chave ou de
+       * modelo não melhora tentando de novo, e insistir atrasaria a
+       * resposta de erro sem motivo.
+       */
+      if (resposta.status === 503 || resposta.status === 429) {
+        await new Promise(parar => {
+          setTimeout(parar, ESPERA_PARA_REPETIR_MS);
+        });
+
+        resposta = await chamar();
+      }
     } catch {
       throw ApiError.servicoIndisponivel(
         'O assistente não respondeu a tempo. Tente de novo em instantes.',

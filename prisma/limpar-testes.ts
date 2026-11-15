@@ -24,6 +24,7 @@
 import { PrismaClient } from '@prisma/client';
 
 import { PRIMEIRO_ID_FEEDBACK } from './feedback';
+import { PRIMEIRO_ID_HISTORICO } from './historico';
 
 import { cupons as cuponsDoSeed } from './catalogo';
 
@@ -189,10 +190,46 @@ const limparConversas = async (): Promise<void> => {
   );
 };
 
+/**
+ * RF0041 a RF0045: as trocas feitas em desenvolvimento, com os itens e as
+ * notificações que elas geraram.
+ *
+ * O critério é o pedido de origem: as compras do histórico têm id a partir
+ * de PRIMEIRO_ID_HISTORICO e nunca têm troca, então toda troca pendurada
+ * numa compra abaixo dessa faixa nasceu de teste. O cupom emitido pela
+ * troca já sai na reposição de cupons, que descarta os TRC- emitidos.
+ */
+const limparTrocas = async (): Promise<void> => {
+  const alvos = await prisma.troca.findMany({
+    where: { pedidoId: { lt: PRIMEIRO_ID_HISTORICO } },
+    select: { id: true, numero: true, pedidoId: true },
+  });
+
+  if (alvos.length === 0) {
+    console.log('Trocas: nada a limpar.');
+
+    return;
+  }
+
+  const ids = alvos.map(t => t.id);
+
+  await prisma.itemTroca.deleteMany({ where: { trocaId: { in: ids } } });
+  // A notificação da RNF0046 aponta para o pedido, não para a troca.
+  await prisma.notificacao.deleteMany({
+    where: { pedidoId: { in: alvos.map(t => t.pedidoId) } },
+  });
+  await prisma.troca.deleteMany({ where: { id: { in: ids } } });
+
+  console.log(
+    `Trocas: ${alvos.length} removida(s) — ${alvos.map(t => t.numero).join(', ')}.`,
+  );
+};
+
 const main = async (): Promise<void> => {
   await limparClientes();
   await limparCompraDosTestes();
   await limparConversas();
+  await limparTrocas();
   await reporCupons();
 };
 

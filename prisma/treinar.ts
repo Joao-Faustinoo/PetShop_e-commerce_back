@@ -42,6 +42,7 @@ import {
   ATRIBUTOS,
   Atributo,
   atributosDe,
+  porFrequencia,
   PesosDoModelo,
   pontuarComModelo,
 } from '../src/utils/recomendacao';
@@ -89,16 +90,6 @@ const embaralhar = <T>(lista: T[]): T[] => {
   return copia;
 };
 
-/** Quantas vezes cada valor aparece, do mais frequente ao menos. */
-const porFrequencia = (valores: number[]): number[] => {
-  const contagem = new Map<number, number>();
-  valores.forEach(v => contagem.set(v, (contagem.get(v) ?? 0) + 1));
-
-  return [...contagem.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([valor]) => valor);
-};
-
 /**
  * Monta os exemplos. O contexto de cada cliente é lido do estado ATUAL do
  * banco, não do que ele era no dia da conversa — o histórico de compras
@@ -107,8 +98,15 @@ const porFrequencia = (valores: number[]): number[] => {
  * que se quer aplicar nas conversas de amanhã.
  */
 const montarExemplos = async (): Promise<Exemplo[]> => {
+  /*
+   * `orderBy` explícito: o embaralhamento tem semente fixa, mas embaralhar
+   * uma lista que chegou em outra ordem produz outra divisão entre treino
+   * e validação — e outro modelo. Sem ORDER BY o Postgres não promete
+   * ordem nenhuma.
+   */
   const interacoes = await prisma.interacaoChat.findMany({
     where: { util: { not: null } },
+    orderBy: { id: 'asc' },
     select: { clienteId: true, produtosSugeridos: true, util: true },
   });
 

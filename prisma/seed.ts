@@ -659,8 +659,11 @@ const carregarFeedback = async (): Promise<void> => {
     .sort((a, b) => a[0] - b[0])
     .map(([id, contagem]) => ({
       id,
+      // Desempate pelo próprio id: sem ele a ordem viria da ordem em que o
+      // banco devolveu as linhas, e duas cargas iguais dariam conjuntos
+      // de treino diferentes.
       categoriasPreferidas: [...contagem.entries()]
-        .sort((a, b) => b[1] - a[1])
+        .sort((a, b) => b[1] - a[1] || a[0] - b[0])
         .map(([categoriaId]) => categoriaId),
       especies: [...new Set(especiesDoCliente.get(id) ?? [])],
     }));

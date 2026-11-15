@@ -117,6 +117,28 @@ export const atributosDe = (
   ];
 };
 
+/**
+ * Os valores ordenados do mais frequente ao menos, com DESEMPATE PELO
+ * PRÓPRIO VALOR.
+ *
+ * POR QUE o desempate importa: isto deriva as preferências do cliente a
+ * partir do histórico de compras, e duas categorias com a mesma contagem
+ * são comuns. Sem critério explícito, a ordem saía da ordem em que o
+ * banco devolveu as linhas — que o Postgres não garante sem `ORDER BY`.
+ * O efeito aparecia longe daqui: duas cargas iguais do seed produziam
+ * conjuntos de treino diferentes (190 e 199 conversas), e o modelo
+ * treinado mudava de uma execução para a outra.
+ */
+export const porFrequencia = (valores: number[]): number[] => {
+  const contagem = new Map<number, number>();
+
+  valores.forEach(v => contagem.set(v, (contagem.get(v) ?? 0) + 1));
+
+  return [...contagem.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+    .map(([valor]) => valor);
+};
+
 const sigmoide = (z: number): number => 1 / (1 + Math.exp(-z));
 
 /** A probabilidade de o cliente achar esta sugestão útil, de 0 a 1. */

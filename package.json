@@ -13,7 +13,8 @@
     "prisma:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
     "limpar:testes": "tsx prisma/limpar-testes.ts",
-    "treinar": "tsx prisma/treinar.ts"
+    "treinar": "tsx prisma/treinar.ts",
+    "verificar": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
